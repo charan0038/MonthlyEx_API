@@ -1,0 +1,29 @@
+## .NET Core
+bin/
+obj/
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa]rchive/
+
+# Visual Studio / Rider / VS Code cache
+.vs/
+.idea/
+.vscode/
+
+# SQLite databases & backups
+*.db
+*.db-shm
+*.db-wal
+*.bak
+expenses.db*
