@@ -141,6 +141,7 @@ builder.Services.AddSwaggerGen(options =>
         Name = "Authorization",
         Description = "Enter JWT token in format: Bearer {token} (or simply paste your token directly)",
         In = ParameterLocation.Header,
+        
         Type = SecuritySchemeType.ApiKey,
         Scheme = "Bearer",
         BearerFormat = "JWT"
