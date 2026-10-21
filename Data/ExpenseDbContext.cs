@@ -15,6 +15,7 @@ public class ExpenseDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<Category> Categories => Set<Category>();
+    public DbSet<Subcategory> Subcategories => Set<Subcategory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -26,6 +27,7 @@ public class ExpenseDbContext : DbContext
             entity.HasIndex(t => t.Date);
             entity.HasIndex(t => t.Type);
             entity.HasIndex(t => t.CategoryId);
+            entity.HasIndex(t => t.SubcategoryId);
             entity.HasIndex(t => t.CreatedBy);
             entity.HasIndex(t => t.IsDeleted);
 
@@ -33,6 +35,11 @@ public class ExpenseDbContext : DbContext
                   .WithMany()
                   .HasForeignKey(t => t.CategoryId)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(t => t.SubcategoryEntity)
+                  .WithMany()
+                  .HasForeignKey(t => t.SubcategoryId)
+                  .OnDelete(DeleteBehavior.SetNull);
         });
 
         // Budget indexes
@@ -62,6 +69,18 @@ public class ExpenseDbContext : DbContext
         {
             entity.HasIndex(c => new { c.Name, c.Type, c.CreatedBy });
             entity.HasIndex(c => c.IsDeleted);
+        });
+
+        // Subcategory indexes & relationship
+        modelBuilder.Entity<Subcategory>(entity =>
+        {
+            entity.HasIndex(s => new { s.CategoryId, s.Name, s.CreatedBy });
+            entity.HasIndex(s => s.IsDeleted);
+
+            entity.HasOne(s => s.Category)
+                  .WithMany(c => c.Subcategories)
+                  .HasForeignKey(s => s.CategoryId)
+                  .OnDelete(DeleteBehavior.Cascade);
         });
     }
 
@@ -140,5 +159,52 @@ public class ExpenseDbContext : DbContext
             await Categories.AddRangeAsync(defaultCategories);
             await SaveChangesAsync();
         }
+
+        // 3. Ensure default Subcategories exist
+        if (!await Subcategories.AnyAsync())
+        {
+            var allCategories = await Categories.Where(c => c.IsDefault && c.IsDeleted == 0).ToListAsync();
+            var subcatMap = new Dictionary<string, string[]>
+            {
+                ["Food"] = ["Groceries", "Restaurant", "Coffee", "Snacks", "Delivery", "Fruits & Veggies"],
+                ["Transport"] = ["Fuel", "Car", "Bus", "Train", "Taxi", "Metro", "Bike", "Flight"],
+                ["Rent"] = ["Apartment", "House", "Office", "Maintenance"],
+                ["Bills"] = ["Electricity", "Water", "Internet", "Mobile", "Gas"],
+                ["Shopping"] = ["Clothes", "Electronics", "Footwear", "Home", "Gifts"],
+                ["Health"] = ["Medicine", "Doctor", "Gym", "Lab Tests", "Insurance"],
+                ["Entertainment"] = ["Movies", "Streaming", "Gaming", "Events", "Outing"],
+                ["Other"] = ["General", "Miscellaneous"],
+                ["Salary"] = ["Monthly Salary", "Bonus", "Overtime"],
+                ["Freelance"] = ["Project", "Client", "Consulting"],
+                ["Investment"] = ["Stocks", "Mutual Funds", "Crypto", "Real Estate", "Dividends"]
+            };
+
+            var subcategoriesToSeed = new List<Subcategory>();
+            foreach (var cat in allCategories)
+            {
+                if (subcatMap.TryGetValue(cat.Name, out var names))
+                {
+                    foreach (var subName in names)
+                    {
+                        subcategoriesToSeed.Add(new Subcategory
+                        {
+                            Name = subName,
+                            CategoryId = cat.Id,
+                            IsDefault = true,
+                            CreatedBy = 1,
+                            CreatedDate = DateTime.UtcNow,
+                            IsDeleted = 0
+                        });
+                    }
+                }
+            }
+
+            if (subcategoriesToSeed.Count > 0)
+            {
+                await Subcategories.AddRangeAsync(subcategoriesToSeed);
+                await SaveChangesAsync();
+            }
+        }
+
     }
 }

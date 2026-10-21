@@ -16,6 +16,11 @@ public class CreateTransactionDto
     [MaxLength(50)]
     public string? Category { get; set; }
 
+    public int? SubcategoryId { get; set; }
+
+    [MaxLength(50)]
+    public string? Subcategory { get; set; }
+
     [Required]
     [MaxLength(10)]
     public string Date { get; set; } = DateTime.UtcNow.ToString("yyyy-MM-dd");
@@ -41,6 +46,11 @@ public class UpdateTransactionDto
     [MaxLength(50)]
     public string? Category { get; set; }
 
+    public int? SubcategoryId { get; set; }
+
+    [MaxLength(50)]
+    public string? Subcategory { get; set; }
+
     [Required]
     [MaxLength(10)]
     public string Date { get; set; } = DateTime.UtcNow.ToString("yyyy-MM-dd");
@@ -61,6 +71,26 @@ public class SetBudgetDto
     [Required]
     [Range(0, 100000000.0)]
     public decimal Amount { get; set; }
+
+    public bool AddToIncome { get; set; } = true;
+}
+
+public class CashCheckoutDto
+{
+    [Required]
+    [MaxLength(7)]
+    public string MonthYear { get; set; } = string.Empty;
+
+    public decimal? Amount { get; set; }
+}
+
+public class RolloverBalanceDto
+{
+    [Required]
+    [MaxLength(7)]
+    public string MonthYear { get; set; } = string.Empty;
+
+    public decimal? Amount { get; set; }
 }
 
 public class CategoryBreakdownDto
@@ -90,3 +120,47 @@ public class MonthlySummaryDto
     public List<CategoryBreakdownDto> CategoryBreakdown { get; set; } = new();
     public List<DailySpendingDto> DailySpending { get; set; } = new();
 }
+
+public class MonthBreakdownItemDto
+{
+    public int Month { get; set; }
+    public string MonthName { get; set; } = string.Empty;
+    public string MonthKey { get; set; } = string.Empty; // "YYYY-MM"
+    public decimal TotalIncome { get; set; }
+    public decimal TotalExpense { get; set; }
+    public decimal NetBalance { get; set; }
+    public decimal BudgetLimit { get; set; }
+    public int TransactionCount { get; set; }
+    public string TopCategory { get; set; } = string.Empty;
+}
+
+public class SubcategoryBreakdownDto
+{
+    public string Subcategory { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public double Percentage { get; set; }
+}
+
+public class YearlySummaryDto
+{
+    public int Year { get; set; }
+    public decimal TotalIncome { get; set; }
+    public decimal TotalExpense { get; set; }
+    public decimal NetSavings { get; set; }
+    public double SavingsRate { get; set; }
+    public decimal AverageMonthlyExpense { get; set; }
+    public decimal AverageMonthlyIncome { get; set; }
+    public int TotalTransactions { get; set; }
+    public string HighestExpenseMonth { get; set; } = string.Empty;
+    public decimal HighestExpenseAmount { get; set; }
+    public string LowestExpenseMonth { get; set; } = string.Empty;
+    public decimal LowestExpenseAmount { get; set; }
+    public string TopExpenseCategory { get; set; } = string.Empty;
+    public decimal TopExpenseCategoryAmount { get; set; }
+    public string InsightMessage { get; set; } = string.Empty;
+    public List<MonthBreakdownItemDto> MonthlyBreakdown { get; set; } = new();
+    public List<CategoryBreakdownDto> CategoryBreakdown { get; set; } = new();
+    public List<SubcategoryBreakdownDto> SubcategoryBreakdown { get; set; } = new();
+}
+

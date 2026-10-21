@@ -19,6 +19,23 @@ public class CreateCategoryDto
     public string Color { get; set; } = "#6366f1";
 }
 
+public class SubcategoryDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int CategoryId { get; set; }
+    public bool IsDefault { get; set; }
+    public int? UserId { get; set; }
+    public int CreatedBy { get; set; }
+}
+
+public class CreateSubcategoryDto
+{
+    [Required(ErrorMessage = "Subcategory name is required.")]
+    [MaxLength(50)]
+    public string Name { get; set; } = string.Empty;
+}
+
 public class CategoryDto
 {
     public int Id { get; set; }
@@ -27,5 +44,7 @@ public class CategoryDto
     public string IconName { get; set; } = "Sparkles";
     public string Color { get; set; } = "#6366f1";
     public bool IsDefault { get; set; }
+    public int? UserId { get; set; }
     public int CreatedBy { get; set; }
+    public List<SubcategoryDto> Subcategories { get; set; } = new();
 }

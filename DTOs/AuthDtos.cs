@@ -42,6 +42,16 @@ public class UserDto
     public DateTime? LastLoginAt { get; set; }
 }
 
+public class UpdateProfileDto
+{
+    [Required(ErrorMessage = "Full name is required.")]
+    [StringLength(100, MinimumLength = 2, ErrorMessage = "Name must be between 2 and 100 characters.")]
+    public string FullName { get; set; } = string.Empty;
+
+    [Required(ErrorMessage = "Mobile number is required.")]
+    [RegularExpression(@"^[0-9]{10}$", ErrorMessage = "Please enter a valid 10-digit mobile number.")]
+    public string MobileNumber { get; set; } = string.Empty;
+}
 
 public class AuthResponseDto
 {
@@ -50,4 +60,24 @@ public class AuthResponseDto
     public int ExpiresIn { get; set; } // in seconds
     public DateTime RefreshTokenExpiresAt { get; set; }
     public UserDto User { get; set; } = null!;
+}
+
+public class ChangePasswordDto
+{
+    [Required(ErrorMessage = "Current password is required.")]
+    public string CurrentPassword { get; set; } = string.Empty;
+
+    [Required(ErrorMessage = "New password is required.")]
+    [StringLength(100, MinimumLength = 6, ErrorMessage = "New password must be at least 6 characters long.")]
+    public string NewPassword { get; set; } = string.Empty;
+}
+
+public class ForgotPasswordDto
+{
+    [Required(ErrorMessage = "Mobile number or username is required.")]
+    public string MobileNumber { get; set; } = string.Empty;
+
+    [Required(ErrorMessage = "New password is required.")]
+    [StringLength(100, MinimumLength = 6, ErrorMessage = "New password must be at least 6 characters long.")]
+    public string NewPassword { get; set; } = string.Empty;
 }

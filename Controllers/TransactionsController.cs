@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +12,7 @@ using MonthExpenses.Api.Models;
 namespace MonthExpenses.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 [EnableRateLimiting("api-policy")]
 public class TransactionsController : ControllerBase
@@ -41,6 +43,7 @@ public class TransactionsController : ControllerBase
         var userId = GetCurrentUserId();
         var query = _context.Transactions
             .Include(t => t.Category)
+            .Include(t => t.SubcategoryEntity)
             .Where(t => t.IsDeleted == 0 && (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)));
 
         if (!string.IsNullOrWhiteSpace(monthYear))
@@ -74,7 +77,8 @@ public class TransactionsController : ControllerBase
         {
             var searchLower = search.ToLower();
             query = query.Where(t => (t.Note != null && t.Note.ToLower().Contains(searchLower)) ||
-                                     (t.Category != null && t.Category.Name.ToLower().Contains(searchLower)));
+                                     (t.Category != null && t.Category.Name.ToLower().Contains(searchLower)) ||
+                                     (t.Subcategory != null && t.Subcategory.ToLower().Contains(searchLower)));
         }
 
         query = sortBy switch
@@ -95,6 +99,7 @@ public class TransactionsController : ControllerBase
         var userId = GetCurrentUserId();
         var transaction = await _context.Transactions
             .Include(t => t.Category)
+            .Include(t => t.SubcategoryEntity)
             .FirstOrDefaultAsync(t =>
                 t.Id == id && t.IsDeleted == 0 && (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)));
 
@@ -115,7 +120,7 @@ public class TransactionsController : ControllerBase
             var cat = await _context.Categories.FirstOrDefaultAsync(c =>
                 c.Name.ToLower() == dto.Category.Trim().ToLower() &&
                 c.IsDeleted == 0 &&
-                (c.IsDefault || c.CreatedBy == userId || (userId == 1 && c.CreatedBy == 0)));
+                (c.IsDefault || c.UserId == userId || c.CreatedBy == userId || (userId == 1 && c.CreatedBy == 0)));
             if (cat != null)
             {
                 categoryId = cat.Id;
@@ -127,12 +132,44 @@ public class TransactionsController : ControllerBase
             return BadRequest(new { message = "Valid CategoryId is required." });
         }
 
+        int? subcategoryId = dto.SubcategoryId > 0 ? dto.SubcategoryId : null;
+        string? subcategoryName = dto.Subcategory?.Trim();
+
+        // If subcategory was provided, validate or resolve
+        if (subcategoryId.HasValue)
+        {
+            var subcat = await _context.Subcategories.FirstOrDefaultAsync(s =>
+                s.Id == subcategoryId.Value &&
+                s.CategoryId == categoryId &&
+                s.IsDeleted == 0 &&
+                (s.IsDefault || s.UserId == userId || s.CreatedBy == userId || (userId == 1 && s.CreatedBy == 0)));
+            if (subcat != null && string.IsNullOrWhiteSpace(subcategoryName))
+            {
+                subcategoryName = subcat.Name;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(subcategoryName))
+        {
+            var subcat = await _context.Subcategories.FirstOrDefaultAsync(s =>
+                s.CategoryId == categoryId &&
+                s.Name.ToLower() == subcategoryName.ToLower() &&
+                s.IsDeleted == 0 &&
+                (s.IsDefault || s.UserId == userId || s.CreatedBy == userId || (userId == 1 && s.CreatedBy == 0)));
+            if (subcat != null)
+            {
+                subcategoryId = subcat.Id;
+                subcategoryName = subcat.Name;
+            }
+        }
+
         var transaction = new Transaction
         {
             Id = Guid.NewGuid().ToString("N"),
             Type = dto.Type.ToLower(),
             Amount = dto.Amount,
             CategoryId = categoryId,
+            SubcategoryId = subcategoryId,
+            Subcategory = subcategoryName,
             Date = dto.Date,
             Note = dto.Note?.Trim(),
             PaymentMethod = dto.PaymentMethod,
@@ -145,6 +182,10 @@ public class TransactionsController : ControllerBase
         await _context.SaveChangesAsync();
 
         await _context.Entry(transaction).Reference(t => t.Category).LoadAsync();
+        if (transaction.SubcategoryId.HasValue)
+        {
+            await _context.Entry(transaction).Reference(t => t.SubcategoryEntity).LoadAsync();
+        }
 
         return CreatedAtAction(nameof(GetTransaction), new { id = transaction.Id }, transaction);
     }
@@ -157,6 +198,7 @@ public class TransactionsController : ControllerBase
         var userId = GetCurrentUserId();
         var transaction = await _context.Transactions
             .Include(t => t.Category)
+            .Include(t => t.SubcategoryEntity)
             .FirstOrDefaultAsync(t =>
                 t.Id == id && t.IsDeleted == 0 && (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)));
 
@@ -168,10 +210,41 @@ public class TransactionsController : ControllerBase
             var cat = await _context.Categories.FirstOrDefaultAsync(c =>
                 c.Name.ToLower() == dto.Category.Trim().ToLower() &&
                 c.IsDeleted == 0 &&
-                (c.IsDefault || c.CreatedBy == userId || (userId == 1 && c.CreatedBy == 0)));
+                (c.IsDefault || c.UserId == userId || c.CreatedBy == userId || (userId == 1 && c.CreatedBy == 0)));
             if (cat != null)
             {
                 categoryId = cat.Id;
+            }
+        }
+
+        int? subcategoryId = dto.SubcategoryId > 0 ? dto.SubcategoryId : null;
+        string? subcategoryName = dto.Subcategory?.Trim();
+
+        if (subcategoryId.HasValue)
+        {
+            var targetCatId = categoryId > 0 ? categoryId : transaction.CategoryId;
+            var subcat = await _context.Subcategories.FirstOrDefaultAsync(s =>
+                s.Id == subcategoryId.Value &&
+                s.CategoryId == targetCatId &&
+                s.IsDeleted == 0 &&
+                (s.IsDefault || s.UserId == userId || s.CreatedBy == userId || (userId == 1 && s.CreatedBy == 0)));
+            if (subcat != null && string.IsNullOrWhiteSpace(subcategoryName))
+            {
+                subcategoryName = subcat.Name;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(subcategoryName))
+        {
+            var targetCatId = categoryId > 0 ? categoryId : transaction.CategoryId;
+            var subcat = await _context.Subcategories.FirstOrDefaultAsync(s =>
+                s.CategoryId == targetCatId &&
+                s.Name.ToLower() == subcategoryName.ToLower() &&
+                s.IsDeleted == 0 &&
+                (s.IsDefault || s.UserId == userId || s.CreatedBy == userId || (userId == 1 && s.CreatedBy == 0)));
+            if (subcat != null)
+            {
+                subcategoryId = subcat.Id;
+                subcategoryName = subcat.Name;
             }
         }
 
@@ -181,6 +254,8 @@ public class TransactionsController : ControllerBase
         {
             transaction.CategoryId = categoryId;
         }
+        transaction.SubcategoryId = subcategoryId;
+        transaction.Subcategory = subcategoryName;
         transaction.Date = dto.Date;
         transaction.Note = dto.Note?.Trim();
         transaction.PaymentMethod = dto.PaymentMethod;
@@ -189,6 +264,10 @@ public class TransactionsController : ControllerBase
 
         await _context.SaveChangesAsync();
         await _context.Entry(transaction).Reference(t => t.Category).LoadAsync();
+        if (transaction.SubcategoryId.HasValue)
+        {
+            await _context.Entry(transaction).Reference(t => t.SubcategoryEntity).LoadAsync();
+        }
         return Ok(transaction);
     }
 
@@ -225,13 +304,58 @@ public class TransactionsController : ControllerBase
             .Where(t => t.IsDeleted == 0 && t.Date.StartsWith(monthYear) && (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)))
             .ToListAsync();
 
+        var budgetRecord = await _context.Budgets.FirstOrDefaultAsync(b =>
+            b.IsDeleted == 0 && b.MonthYear == monthYear && (b.CreatedBy == userId || (userId == 1 && b.CreatedBy == 0)));
+        var budgetLimit = budgetRecord?.Amount ?? 10000m;
+
+        // Ensure monthly budget allocation is always synchronized into Total Income and Net Balance
+        if (userId > 0 && budgetLimit > 0)
+        {
+            var budgetIncomeTx = currentTxs.FirstOrDefault(t =>
+                t.Type == "income" &&
+                (t.Note == "Monthly Budget" || t.Note == "Monthly Budget Allocation" || t.Note == "Opening Budget"));
+
+            if (budgetIncomeTx == null)
+            {
+                var incomeCat = await _context.Categories.FirstOrDefaultAsync(c =>
+                    c.IsDeleted == 0 &&
+                    c.Type == "income" &&
+                    (c.IsDefault || c.UserId == userId || c.CreatedBy == userId)) ??
+                    await _context.Categories.FirstOrDefaultAsync(c => c.Type == "income");
+
+                int catId = incomeCat?.Id ?? 9;
+
+                var newIncomeTx = new Transaction
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Type = "income",
+                    Amount = budgetLimit,
+                    CategoryId = catId,
+                    Date = $"{monthYear}-01",
+                    Note = "Monthly Budget",
+                    PaymentMethod = "UPI",
+                    CreatedBy = userId,
+                    CreatedDate = DateTime.UtcNow,
+                    IsDeleted = 0,
+                    Category = incomeCat
+                };
+
+                _context.Transactions.Add(newIncomeTx);
+                await _context.SaveChangesAsync();
+                currentTxs.Add(newIncomeTx);
+            }
+            else if (budgetRecord != null && budgetIncomeTx.Amount != budgetRecord.Amount)
+            {
+                budgetIncomeTx.Amount = budgetRecord.Amount;
+                budgetIncomeTx.UpdatedBy = userId;
+                budgetIncomeTx.UpdatedDate = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+        }
+
         var totalIncome = currentTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
         var totalExpense = currentTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
         var netBalance = totalIncome - totalExpense;
-
-        var budgetRecord = await _context.Budgets.FirstOrDefaultAsync(b =>
-            b.IsDeleted == 0 && b.MonthYear == monthYear && (b.CreatedBy == userId || (userId == 1 && b.CreatedBy == 0)));
-        var budgetLimit = budgetRecord?.Amount ?? 50000m;
         var budgetLeft = budgetLimit - totalExpense;
         var budgetPercent = budgetLimit > 0 ? (double)(totalExpense / budgetLimit) * 100.0 : 0.0;
 
@@ -331,6 +455,132 @@ public class TransactionsController : ControllerBase
         };
 
         return Ok(summary);
+    }
+
+    [HttpGet("yearly-summary")]
+    public async Task<ActionResult<YearlySummaryDto>> GetYearlySummary([FromQuery] int? year)
+    {
+        var targetYear = year ?? DateTime.UtcNow.Year;
+        var yearPrefix = targetYear.ToString();
+
+        var userId = GetCurrentUserId();
+        var yearTxs = await _context.Transactions
+            .Include(t => t.Category)
+            .Where(t => t.IsDeleted == 0 && t.Date.StartsWith(yearPrefix) && (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)))
+            .ToListAsync();
+
+        var totalIncome = yearTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
+        var totalExpense = yearTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
+        var netSavings = totalIncome - totalExpense;
+        var savingsRate = totalIncome > 0 ? (double)(netSavings / totalIncome) * 100.0 : 0.0;
+
+        var monthNames = new[] { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+        var monthlyBreakdown = new List<MonthBreakdownItemDto>();
+        for (int m = 1; m <= 12; m++)
+        {
+            var mPrefix = $"{targetYear}-{m:D2}";
+            var mTxs = yearTxs.Where(t => t.Date.StartsWith(mPrefix)).ToList();
+            var mIncome = mTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
+            var mExpense = mTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
+
+            var topCat = mTxs.Where(t => t.Type == "expense")
+                .GroupBy(t => t.Category?.Name ?? "Other")
+                .OrderByDescending(g => g.Sum(x => x.Amount))
+                .Select(g => g.Key)
+                .FirstOrDefault() ?? "None";
+
+            monthlyBreakdown.Add(new MonthBreakdownItemDto
+            {
+                Month = m,
+                MonthName = monthNames[m - 1],
+                MonthKey = mPrefix,
+                TotalIncome = mIncome,
+                TotalExpense = mExpense,
+                NetBalance = mIncome - mExpense,
+                TransactionCount = mTxs.Count,
+                TopCategory = topCat
+            });
+        }
+
+        var monthsWithExpenses = monthlyBreakdown.Where(mb => mb.TotalExpense > 0).ToList();
+        var highestExpenseItem = monthsWithExpenses.OrderByDescending(mb => mb.TotalExpense).FirstOrDefault();
+        var lowestExpenseItem = monthsWithExpenses.OrderBy(mb => mb.TotalExpense).FirstOrDefault();
+
+        var categoryGroups = yearTxs
+            .Where(t => t.Type == "expense")
+            .GroupBy(t => t.Category?.Name ?? "Other")
+            .Select(g => new CategoryBreakdownDto
+            {
+                Category = g.Key,
+                Amount = g.Sum(t => t.Amount),
+                Percentage = totalExpense > 0 ? Math.Round((double)(g.Sum(t => t.Amount) / totalExpense) * 100.0, 1) : 0
+            })
+            .OrderByDescending(c => c.Amount)
+            .ToList();
+
+        var subcategoryGroups = yearTxs
+            .Where(t => t.Type == "expense" && !string.IsNullOrWhiteSpace(t.Subcategory))
+            .GroupBy(t => new { Subcat = t.Subcategory!, Cat = t.Category?.Name ?? "Other" })
+            .Select(g => new SubcategoryBreakdownDto
+            {
+                Subcategory = g.Key.Subcat,
+                Category = g.Key.Cat,
+                Amount = g.Sum(t => t.Amount),
+                Percentage = totalExpense > 0 ? Math.Round((double)(g.Sum(t => t.Amount) / totalExpense) * 100.0, 1) : 0
+            })
+            .OrderByDescending(s => s.Amount)
+            .Take(10)
+            .ToList();
+
+        var topExpenseCat = categoryGroups.FirstOrDefault();
+
+        var insight = new StringBuilder();
+        if (savingsRate >= 30)
+        {
+            insight.Append($"Outstanding financial health in {targetYear}! You are saving {savingsRate:F1}% of your annual income.");
+        }
+        else if (savingsRate > 0)
+        {
+            insight.Append($"Positive savings in {targetYear}. You retained {savingsRate:F1}% of your annual earnings.");
+        }
+        else if (totalIncome > 0 && netSavings < 0)
+        {
+            insight.Append($"Annual expenses exceeded income in {targetYear} by ₹{Math.Abs(netSavings):N0}.");
+        }
+        else
+        {
+            insight.Append($"Annual expense overview for {targetYear}.");
+        }
+
+        if (topExpenseCat != null)
+        {
+            insight.Append($" Your primary expense driver was {topExpenseCat.Category} (₹{topExpenseCat.Amount:N0}, {topExpenseCat.Percentage}%).");
+        }
+
+        var result = new YearlySummaryDto
+        {
+            Year = targetYear,
+            TotalIncome = totalIncome,
+            TotalExpense = totalExpense,
+            NetSavings = netSavings,
+            SavingsRate = Math.Round(savingsRate, 1),
+            AverageMonthlyExpense = Math.Round(totalExpense / 12m, 2),
+            AverageMonthlyIncome = Math.Round(totalIncome / 12m, 2),
+            TotalTransactions = yearTxs.Count,
+            HighestExpenseMonth = highestExpenseItem?.MonthName ?? "None",
+            HighestExpenseAmount = highestExpenseItem?.TotalExpense ?? 0m,
+            LowestExpenseMonth = lowestExpenseItem?.MonthName ?? "None",
+            LowestExpenseAmount = lowestExpenseItem?.TotalExpense ?? 0m,
+            TopExpenseCategory = topExpenseCat?.Category ?? "None",
+            TopExpenseCategoryAmount = topExpenseCat?.Amount ?? 0m,
+            InsightMessage = insight.ToString(),
+            MonthlyBreakdown = monthlyBreakdown,
+            CategoryBreakdown = categoryGroups,
+            SubcategoryBreakdown = subcategoryGroups
+        };
+
+        return Ok(result);
     }
 
     [HttpGet("export")]

@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace MonthExpenses.Api.Models;
 
@@ -24,4 +25,9 @@ public class Category : BaseBo
     public string Color { get; set; } = "#6366f1";
 
     public bool IsDefault { get; set; } = false;
+
+    public int? UserId { get; set; }
+
+    [JsonIgnore]
+    public virtual ICollection<Subcategory> Subcategories { get; set; } = new List<Subcategory>();
 }

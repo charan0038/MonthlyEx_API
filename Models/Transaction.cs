@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace MonthExpenses.Api.Models;
 
@@ -23,6 +24,15 @@ public class Transaction : BaseBo
 
     [NotMapped]
     public string CategoryName => Category?.Name ?? string.Empty;
+
+    public int? SubcategoryId { get; set; }
+
+    [JsonIgnore]
+    [ForeignKey(nameof(SubcategoryId))]
+    public virtual Subcategory? SubcategoryEntity { get; set; }
+
+    [MaxLength(50)]
+    public string? Subcategory { get; set; }
 
     [Required]
     [MaxLength(10)]
