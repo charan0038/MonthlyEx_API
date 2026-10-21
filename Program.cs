@@ -63,6 +63,17 @@ builder.Services.AddAuthentication(options =>
 });
 builder.Services.AddAuthorization();
 
+// Add CORS to allow frontend clients to connect from anywhere
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
+
 // 4. Configure Rate Limiter (Auth & General API endpoints)
 builder.Services.AddRateLimiter(rateLimiterOptions =>
 {
@@ -187,15 +198,14 @@ catch (Exception ex)
 
 
 // 8. Configure HTTP request pipeline
-if (app.Environment.IsDevelopment())
+app.UseCors("AllowAll");
+
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "MonthExpenses API v1");
-        c.RoutePrefix = "swagger";
-    });
-}
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "MonthExpenses API v1");
+    c.RoutePrefix = "swagger";
+});
 
 app.UseRateLimiter();
 
