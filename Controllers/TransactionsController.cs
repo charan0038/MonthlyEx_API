@@ -306,57 +306,33 @@ public class TransactionsController : ControllerBase
 
         var budgetRecord = await _context.Budgets.FirstOrDefaultAsync(b =>
             b.IsDeleted == 0 && b.MonthYear == monthYear && (b.CreatedBy == userId || (userId == 1 && b.CreatedBy == 0)));
-        var budgetLimit = budgetRecord?.Amount ?? 10000m;
+        var budgetLimit = budgetRecord?.Amount ?? 0m;
 
-        // Ensure monthly budget allocation is always synchronized into Total Income and Net Balance
-        if (userId > 0 && budgetLimit > 0)
+        // If no budget has been set (budget is 0), clean up any previously auto-generated budget transactions
+        if (budgetLimit <= 0)
         {
-            var budgetIncomeTx = currentTxs.FirstOrDefault(t =>
+            var ghostTxs = currentTxs.Where(t =>
                 t.Type == "income" &&
-                (t.Note == "Monthly Budget" || t.Note == "Monthly Budget Allocation" || t.Note == "Opening Budget"));
+                (t.Note == "Monthly Budget" || t.Note == "Monthly Budget Allocation" || t.Note == "Opening Budget"))
+                .ToList();
 
-            if (budgetIncomeTx == null)
+            if (ghostTxs.Any())
             {
-                var incomeCat = await _context.Categories.FirstOrDefaultAsync(c =>
-                    c.IsDeleted == 0 &&
-                    c.Type == "income" &&
-                    (c.IsDefault || c.UserId == userId || c.CreatedBy == userId)) ??
-                    await _context.Categories.FirstOrDefaultAsync(c => c.Type == "income");
-
-                int catId = incomeCat?.Id ?? 9;
-
-                var newIncomeTx = new Transaction
+                foreach (var gt in ghostTxs)
                 {
-                    Id = Guid.NewGuid().ToString("N"),
-                    Type = "income",
-                    Amount = budgetLimit,
-                    CategoryId = catId,
-                    Date = $"{monthYear}-01",
-                    Note = "Monthly Budget",
-                    PaymentMethod = "UPI",
-                    CreatedBy = userId,
-                    CreatedDate = DateTime.UtcNow,
-                    IsDeleted = 0,
-                    Category = incomeCat
-                };
-
-                _context.Transactions.Add(newIncomeTx);
+                    gt.IsDeleted = 1;
+                    gt.UpdatedBy = userId;
+                    gt.UpdatedDate = DateTime.UtcNow;
+                }
                 await _context.SaveChangesAsync();
-                currentTxs.Add(newIncomeTx);
-            }
-            else if (budgetRecord != null && budgetIncomeTx.Amount != budgetRecord.Amount)
-            {
-                budgetIncomeTx.Amount = budgetRecord.Amount;
-                budgetIncomeTx.UpdatedBy = userId;
-                budgetIncomeTx.UpdatedDate = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
+                currentTxs.RemoveAll(t => ghostTxs.Contains(t));
             }
         }
 
         var totalIncome = currentTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
         var totalExpense = currentTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
         var netBalance = totalIncome - totalExpense;
-        var budgetLeft = budgetLimit - totalExpense;
+        var budgetLeft = budgetLimit > 0 ? budgetLimit - totalExpense : 0m;
         var budgetPercent = budgetLimit > 0 ? (double)(totalExpense / budgetLimit) * 100.0 : 0.0;
 
         // Category breakdown for expenses

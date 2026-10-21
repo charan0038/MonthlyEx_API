@@ -13,7 +13,7 @@ public class MonthlyBudget : BaseBo
 
     [Required]
     [Range(0, 100000000.0)]
-    public decimal Amount { get; set; } = 50000m;
+    public decimal Amount { get; set; } = 0m;
 
     public int UserId
     {

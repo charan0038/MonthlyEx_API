@@ -43,11 +43,11 @@ public class BudgetsController : ControllerBase
 
         if (budget == null)
         {
-            // Default 10,000 (10k) for this user if not explicitly saved yet
+            // Default 0 for this user if not explicitly saved yet
             return Ok(new MonthlyBudget
             {
                 MonthYear = monthYear,
-                Amount = 10000m,
+                Amount = 0m,
                 CreatedBy = userId.Value,
                 CreatedDate = DateTime.UtcNow,
                 IsDeleted = 0
