@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: monthexpenses-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: ConnectionStrings__DefaultConnection
+        value: Host=ep-wispy-darkness-azf1ttkm-pooler.c-3.ap-southeast-1.aws.neon.tech;Port=5432;Database=neondb;Username=neondb_owner;Password=npg_vpyK6MrjC9bs;SSL Mode=Require;Trust Server Certificate=true
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: Jwt__Key
+        value: KharchaSecureJwtTokenKey2026_WithHighEntropyAtLeast256BitsLong!
