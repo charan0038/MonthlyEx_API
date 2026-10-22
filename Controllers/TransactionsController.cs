@@ -37,6 +37,7 @@ public class TransactionsController : ControllerBase
         [FromQuery] string? startDate,
         [FromQuery] string? endDate,
         [FromQuery] string? category,
+        [FromQuery] string? subcategory,
         [FromQuery] string? type,
         [FromQuery] string? payment,
         [FromQuery] string? search,
@@ -72,6 +73,18 @@ public class TransactionsController : ControllerBase
             else
             {
                 query = query.Where(t => t.Category != null && t.Category.Name.ToLower() == category.ToLower());
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(subcategory) && !subcategory.Equals("ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            if (int.TryParse(subcategory, out var subcatId))
+            {
+                query = query.Where(t => t.SubcategoryId == subcatId);
+            }
+            else
+            {
+                query = query.Where(t => t.Subcategory != null && t.Subcategory.ToLower() == subcategory.ToLower());
             }
         }
 
