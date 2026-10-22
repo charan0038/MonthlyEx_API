@@ -34,6 +34,8 @@ public class TransactionsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<Transaction>>> GetTransactions(
         [FromQuery] string? monthYear,
+        [FromQuery] string? startDate,
+        [FromQuery] string? endDate,
         [FromQuery] string? category,
         [FromQuery] string? type,
         [FromQuery] string? payment,
@@ -49,6 +51,16 @@ public class TransactionsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(monthYear))
         {
             query = query.Where(t => t.Date.StartsWith(monthYear));
+        }
+
+        if (!string.IsNullOrWhiteSpace(startDate))
+        {
+            query = query.Where(t => string.Compare(t.Date, startDate) >= 0);
+        }
+
+        if (!string.IsNullOrWhiteSpace(endDate))
+        {
+            query = query.Where(t => string.Compare(t.Date, endDate) <= 0);
         }
 
         if (!string.IsNullOrWhiteSpace(category) && !category.Equals("ALL", StringComparison.OrdinalIgnoreCase))
@@ -554,6 +566,168 @@ public class TransactionsController : ControllerBase
             MonthlyBreakdown = monthlyBreakdown,
             CategoryBreakdown = categoryGroups,
             SubcategoryBreakdown = subcategoryGroups
+        };
+
+        return Ok(result);
+    }
+
+    [HttpGet("weekly-summary")]
+    public async Task<ActionResult<WeeklySummaryDto>> GetWeeklySummary([FromQuery] string? date)
+    {
+        DateTime targetDate;
+        if (!string.IsNullOrWhiteSpace(date) && DateTime.TryParse(date, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        {
+            targetDate = parsed.Date;
+        }
+        else
+        {
+            targetDate = DateTime.UtcNow.Date;
+        }
+
+        // Determine Monday of current target week
+        int diff = ((int)targetDate.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        var weekStart = targetDate.AddDays(-diff);
+        var weekEnd = weekStart.AddDays(6);
+
+        var startDateStr = weekStart.ToString("yyyy-MM-dd");
+        var endDateStr = weekEnd.ToString("yyyy-MM-dd");
+
+        // ISO Week number
+        var cal = CultureInfo.InvariantCulture.Calendar;
+        int weekNumber = cal.GetWeekOfYear(weekStart, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
+        int year = weekStart.Year;
+
+        var userId = GetCurrentUserId();
+
+        // Current week transactions
+        var weekTxs = await _context.Transactions
+            .Include(t => t.Category)
+            .Where(t => t.IsDeleted == 0 &&
+                        string.Compare(t.Date, startDateStr) >= 0 &&
+                        string.Compare(t.Date, endDateStr) <= 0 &&
+                        (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)))
+            .OrderBy(t => t.Date)
+            .ThenBy(t => t.CreatedDate)
+            .ToListAsync();
+
+        // Previous week transactions for week-over-week comparison
+        var prevWeekStart = weekStart.AddDays(-7);
+        var prevWeekEnd = weekEnd.AddDays(-7);
+        var prevStartDateStr = prevWeekStart.ToString("yyyy-MM-dd");
+        var prevEndDateStr = prevWeekEnd.ToString("yyyy-MM-dd");
+
+        var prevWeekTxs = await _context.Transactions
+            .Where(t => t.IsDeleted == 0 &&
+                        t.Type == "expense" &&
+                        string.Compare(t.Date, prevStartDateStr) >= 0 &&
+                        string.Compare(t.Date, prevEndDateStr) <= 0 &&
+                        (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)))
+            .ToListAsync();
+
+        var prevTotalExpense = prevWeekTxs.Sum(t => t.Amount);
+
+        // Filter out auto-budget transactions from income
+        var validTxs = weekTxs.Where(t => !(t.Type == "income" &&
+            (t.Note == "Monthly Budget" || t.Note == "Monthly Budget Allocation" || t.Note == "Opening Budget"))).ToList();
+
+        var totalIncome = validTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
+        var totalExpense = validTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
+        var netBalance = totalIncome - totalExpense;
+        var dailyAverage = Math.Round(totalExpense / 7m, 2);
+
+        // Daily breakdown (7 days: Mon-Sun)
+        var dailyBreakdown = new List<DaySpendingSummaryDto>();
+        for (int i = 0; i < 7; i++)
+        {
+            var dayDate = weekStart.AddDays(i);
+            var dayDateStr = dayDate.ToString("yyyy-MM-dd");
+            var dayTxs = validTxs.Where(t => t.Date == dayDateStr).ToList();
+
+            var dayIncome = dayTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
+            var dayExpense = dayTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
+
+            dailyBreakdown.Add(new DaySpendingSummaryDto
+            {
+                Date = dayDateStr,
+                DayName = dayDate.ToString("dddd", CultureInfo.InvariantCulture),
+                DayShort = dayDate.ToString("ddd", CultureInfo.InvariantCulture),
+                TotalIncome = dayIncome,
+                TotalExpense = dayExpense,
+                NetBalance = dayIncome - dayExpense,
+                TransactionCount = dayTxs.Count
+            });
+        }
+
+        var highestDay = dailyBreakdown.OrderByDescending(d => d.TotalExpense).FirstOrDefault();
+
+        // Category breakdown
+        var expenseTxs = validTxs.Where(t => t.Type == "expense").ToList();
+        var categoryGroups = expenseTxs
+            .GroupBy(t => t.Category?.Name ?? "Other")
+            .Select(g => new CategoryBreakdownDto
+            {
+                Category = g.Key,
+                Amount = g.Sum(x => x.Amount),
+                Percentage = totalExpense > 0 ? Math.Round((double)(g.Sum(x => x.Amount) / totalExpense) * 100.0, 1) : 0
+            })
+            .OrderByDescending(c => c.Amount)
+            .ToList();
+
+        var topCat = categoryGroups.FirstOrDefault();
+
+        double? wowChange = null;
+        if (prevTotalExpense > 0)
+        {
+            wowChange = Math.Round(((double)(totalExpense - prevTotalExpense) / (double)prevTotalExpense) * 100.0, 1);
+        }
+
+        var formattedRange = $"{weekStart:dd MMM} – {weekEnd:dd MMM yyyy}";
+
+        var insight = new StringBuilder();
+        if (totalExpense > 0)
+        {
+            if (topCat != null)
+            {
+                insight.Append($"{topCat.Category} was your primary expense driver this week (₹{topCat.Amount:N0}, {topCat.Percentage}%). ");
+            }
+            if (wowChange.HasValue)
+            {
+                if (wowChange.Value > 0)
+                    insight.Append($"You spent {wowChange.Value:F1}% more compared to last week (₹{prevTotalExpense:N0}). ");
+                else if (wowChange.Value < 0)
+                    insight.Append($"Great discipline! You spent {Math.Abs(wowChange.Value):F1}% less than last week. ");
+            }
+            if (highestDay != null && highestDay.TotalExpense > 0)
+            {
+                insight.Append($"Peak spending day was {highestDay.DayName} (₹{highestDay.TotalExpense:N0}).");
+            }
+        }
+        else
+        {
+            insight.Append("No expenses recorded yet for this week.");
+        }
+
+        var result = new WeeklySummaryDto
+        {
+            Year = year,
+            WeekNumber = weekNumber,
+            StartDate = startDateStr,
+            EndDate = endDateStr,
+            FormattedRange = formattedRange,
+            TotalIncome = totalIncome,
+            TotalExpense = totalExpense,
+            NetBalance = netBalance,
+            DailyAverage = dailyAverage,
+            TransactionCount = validTxs.Count,
+            HighestDayName = (highestDay != null && highestDay.TotalExpense > 0) ? highestDay.DayName : "None",
+            HighestDayAmount = highestDay?.TotalExpense ?? 0m,
+            TopCategory = topCat?.Category ?? "None",
+            TopCategoryAmount = topCat?.Amount ?? 0m,
+            InsightMessage = insight.ToString(),
+            PrevWeekExpense = prevTotalExpense,
+            WeekOverWeekChangePercent = wowChange,
+            CategoryBreakdown = categoryGroups,
+            DailyBreakdown = dailyBreakdown
         };
 
         return Ok(result);

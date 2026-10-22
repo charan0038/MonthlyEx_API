@@ -164,3 +164,37 @@ public class YearlySummaryDto
     public List<SubcategoryBreakdownDto> SubcategoryBreakdown { get; set; } = new();
 }
 
+public class DaySpendingSummaryDto
+{
+    public string Date { get; set; } = string.Empty; // "YYYY-MM-DD"
+    public string DayName { get; set; } = string.Empty; // "Monday", "Tuesday", etc.
+    public string DayShort { get; set; } = string.Empty; // "Mon", "Tue", etc.
+    public decimal TotalIncome { get; set; }
+    public decimal TotalExpense { get; set; }
+    public decimal NetBalance { get; set; }
+    public int TransactionCount { get; set; }
+}
+
+public class WeeklySummaryDto
+{
+    public int Year { get; set; }
+    public int WeekNumber { get; set; }
+    public string StartDate { get; set; } = string.Empty; // "YYYY-MM-DD"
+    public string EndDate { get; set; } = string.Empty; // "YYYY-MM-DD"
+    public string FormattedRange { get; set; } = string.Empty; // "19 Oct - 25 Oct 2026"
+    public decimal TotalIncome { get; set; }
+    public decimal TotalExpense { get; set; }
+    public decimal NetBalance { get; set; }
+    public decimal DailyAverage { get; set; }
+    public int TransactionCount { get; set; }
+    public string HighestDayName { get; set; } = string.Empty;
+    public decimal HighestDayAmount { get; set; }
+    public string TopCategory { get; set; } = string.Empty;
+    public decimal TopCategoryAmount { get; set; }
+    public string InsightMessage { get; set; } = string.Empty;
+    public decimal? PrevWeekExpense { get; set; }
+    public double? WeekOverWeekChangePercent { get; set; }
+    public List<CategoryBreakdownDto> CategoryBreakdown { get; set; } = new();
+    public List<DaySpendingSummaryDto> DailyBreakdown { get; set; } = new();
+}
+
