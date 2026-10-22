@@ -2,9 +2,8 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.EntityFrameworkCore;
-using MonthExpenses.Api.Data;
 using MonthExpenses.Api.DTOs;
+using MonthExpenses.Api.Interfaces;
 using MonthExpenses.Api.Models;
 using MonthExpenses.Api.Services;
 
@@ -13,18 +12,11 @@ namespace MonthExpenses.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]
-public class AuthController : ControllerBase
+public class AuthController(IAuthRepository authRepository, ITokenService tokenService, ILogger<AuthController> logger) : ControllerBase
 {
-    private readonly ExpenseDbContext _context;
-    private readonly ITokenService _tokenService;
-    private readonly ILogger<AuthController> _logger;
-
-    public AuthController(ExpenseDbContext context, ITokenService tokenService, ILogger<AuthController> logger)
-    {
-        _context = context;
-        _tokenService = tokenService;
-        _logger = logger;
-    }
+    private readonly IAuthRepository _authRepository = authRepository;
+    private readonly ITokenService _tokenService = tokenService;
+    private readonly ILogger<AuthController> _logger = logger;
 
     /// <summary>
     /// Register a new account with Mobile Number and Password.
@@ -42,14 +34,14 @@ public class AuthController : ControllerBase
         var cleanName = dto.FullName.Trim();
 
         // 1. Prevent duplicate mobile numbers
-        var existingMobile = await _context.Users.AnyAsync(u => u.MobileNumber == cleanMobile && u.IsDeleted == 0);
+        var existingMobile = await _authRepository.IsMobileRegisteredAsync(cleanMobile);
         if (existingMobile)
         {
             return BadRequest(new { message = "This mobile number is already registered. Please sign in instead." });
         }
 
         // 2. Prevent duplicate usernames/names (case-insensitive)
-        var existingName = await _context.Users.AnyAsync(u => u.FullName.ToLower() == cleanName.ToLower() && u.IsDeleted == 0);
+        var existingName = await _authRepository.IsUsernameTakenAsync(cleanName);
         if (existingName)
         {
             return BadRequest(new { message = "This username is already taken. Please choose a different name." });
@@ -57,7 +49,7 @@ public class AuthController : ControllerBase
 
         var user = new User
         {
-            FullName = dto.FullName.Trim(),
+            FullName = cleanName,
             MobileNumber = cleanMobile,
             PasswordHash = PasswordHelper.HashPassword(dto.Password),
             CreatedDate = DateTime.UtcNow,
@@ -65,18 +57,13 @@ public class AuthController : ControllerBase
             IsDeleted = 0
         };
 
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync();
-
-        user.CreatedBy = user.Id;
-        await _context.SaveChangesAsync();
+        await _authRepository.CreateUserAsync(user);
 
         // Generate Access Token & 6-Month Refresh Token
         var accessToken = _tokenService.GenerateAccessToken(user);
         var refreshToken = _tokenService.GenerateRefreshToken(user.Id);
 
-        _context.RefreshTokens.Add(refreshToken);
-        await _context.SaveChangesAsync();
+        await _authRepository.SaveRefreshTokenAsync(refreshToken);
 
         _logger.LogInformation("New user registered with mobile: {Mobile}", cleanMobile);
 
@@ -111,8 +98,7 @@ public class AuthController : ControllerBase
             return BadRequest(ModelState);
 
         var identifier = dto.MobileNumber.Trim();
-        var user = await _context.Users.FirstOrDefaultAsync(u =>
-            (u.MobileNumber == identifier || u.FullName.ToLower() == identifier.ToLower()) && u.IsDeleted == 0);
+        var user = await _authRepository.GetUserByIdentifierAsync(identifier);
 
         if (user == null || !PasswordHelper.VerifyPassword(dto.Password, user.PasswordHash))
         {
@@ -123,12 +109,13 @@ public class AuthController : ControllerBase
         user.UpdatedDate = DateTime.UtcNow;
         user.UpdatedBy = user.Id;
 
+        await _authRepository.UpdateUserAsync(user);
+
         // Generate Access Token & 6-Month Refresh Token
         var accessToken = _tokenService.GenerateAccessToken(user);
         var refreshToken = _tokenService.GenerateRefreshToken(user.Id);
 
-        _context.RefreshTokens.Add(refreshToken);
-        await _context.SaveChangesAsync();
+        await _authRepository.SaveRefreshTokenAsync(refreshToken);
 
         _logger.LogInformation("User logged in successfully: {Identifier}", identifier);
 
@@ -160,9 +147,7 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(dto.RefreshToken))
             return BadRequest(new { message = "Refresh token is required." });
 
-        var storedToken = await _context.RefreshTokens
-            .Include(r => r.User)
-            .FirstOrDefaultAsync(r => r.Token == dto.RefreshToken && r.IsDeleted == 0);
+        var storedToken = await _authRepository.GetRefreshTokenAsync(dto.RefreshToken);
 
         if (storedToken == null)
         {
@@ -193,8 +178,8 @@ public class AuthController : ControllerBase
         var newRefreshToken = _tokenService.GenerateRefreshToken(user.Id);
         storedToken.ReplacedByToken = newRefreshToken.Token;
 
-        _context.RefreshTokens.Add(newRefreshToken);
-        await _context.SaveChangesAsync();
+        await _authRepository.UpdateUserAsync(user);
+        await _authRepository.SaveRefreshTokenAsync(newRefreshToken);
 
         var newAccessToken = _tokenService.GenerateAccessToken(user);
 
@@ -223,13 +208,7 @@ public class AuthController : ControllerBase
     {
         if (!string.IsNullOrWhiteSpace(dto.RefreshToken))
         {
-            var storedToken = await _context.RefreshTokens.FirstOrDefaultAsync(r => r.Token == dto.RefreshToken);
-            if (storedToken != null && !storedToken.IsRevoked)
-            {
-                storedToken.RevokedAt = DateTime.UtcNow;
-                storedToken.UpdatedDate = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-            }
+            await _authRepository.RevokeRefreshTokenAsync(dto.RefreshToken);
         }
 
         return Ok(new { message = "Logged out successfully." });
@@ -246,7 +225,7 @@ public class AuthController : ControllerBase
         if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
             return Unauthorized();
 
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId && u.IsDeleted == 0);
+        var user = await _authRepository.GetUserByIdAsync(userId);
         if (user == null)
             return NotFound(new { message = "User not found." });
 
@@ -275,7 +254,7 @@ public class AuthController : ControllerBase
         if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
             return Unauthorized();
 
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId && u.IsDeleted == 0);
+        var user = await _authRepository.GetUserByIdAsync(userId);
         if (user == null)
             return NotFound(new { message = "User not found." });
 
@@ -294,17 +273,9 @@ public class AuthController : ControllerBase
         user.UpdatedBy = user.Id;
 
         // Revoke active refresh tokens
-        var activeTokens = await _context.RefreshTokens
-            .Where(r => r.UserId == user.Id && r.RevokedAt == null && r.ExpiresAt > DateTime.UtcNow)
-            .ToListAsync();
-        foreach (var t in activeTokens)
-        {
-            t.RevokedAt = DateTime.UtcNow;
-            t.UpdatedDate = DateTime.UtcNow;
-            t.UpdatedBy = user.Id;
-        }
+        await _authRepository.RevokeActiveUserRefreshTokensAsync(user.Id);
+        await _authRepository.UpdateUserAsync(user);
 
-        await _context.SaveChangesAsync();
         _logger.LogInformation("Password changed successfully for user ID: {UserId}", user.Id);
 
         return Ok(new { message = "Password changed successfully!" });
@@ -323,8 +294,7 @@ public class AuthController : ControllerBase
             return BadRequest(ModelState);
 
         var identifier = dto.MobileNumber.Trim();
-        var user = await _context.Users.FirstOrDefaultAsync(u =>
-            (u.MobileNumber == identifier || u.FullName.ToLower() == identifier.ToLower()) && u.IsDeleted == 0);
+        var user = await _authRepository.GetUserByIdentifierAsync(identifier);
 
         if (user == null)
         {
@@ -336,17 +306,9 @@ public class AuthController : ControllerBase
         user.UpdatedBy = user.Id;
 
         // Revoke active refresh tokens
-        var activeTokens = await _context.RefreshTokens
-            .Where(r => r.UserId == user.Id && r.RevokedAt == null && r.ExpiresAt > DateTime.UtcNow)
-            .ToListAsync();
-        foreach (var t in activeTokens)
-        {
-            t.RevokedAt = DateTime.UtcNow;
-            t.UpdatedDate = DateTime.UtcNow;
-            t.UpdatedBy = user.Id;
-        }
+        await _authRepository.RevokeActiveUserRefreshTokensAsync(user.Id);
+        await _authRepository.UpdateUserAsync(user);
 
-        await _context.SaveChangesAsync();
         _logger.LogInformation("Password reset successfully for user: {Identifier}", identifier);
 
         return Ok(new { message = "Password reset successfully! You can now sign in with your new password." });
@@ -367,7 +329,7 @@ public class AuthController : ControllerBase
         if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
             return Unauthorized();
 
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId && u.IsDeleted == 0);
+        var user = await _authRepository.GetUserByIdAsync(userId);
         if (user == null)
             return NotFound(new { message = "User not found." });
 
@@ -375,15 +337,15 @@ public class AuthController : ControllerBase
         var cleanMobile = dto.MobileNumber.Trim();
 
         // Check if username/name taken by another user
-        var nameTaken = await _context.Users.AnyAsync(u => u.Id != userId && u.FullName.ToLower() == cleanName.ToLower() && u.IsDeleted == 0);
+        var nameTaken = await _authRepository.IsUsernameTakenAsync(cleanName, userId);
         if (nameTaken)
         {
             return BadRequest(new { message = "This username is already taken. Please choose a different name." });
         }
 
         // Check if mobile number taken by another user
-        var mobileTaken = await _context.Users.AnyAsync(u => u.Id != userId && u.MobileNumber == cleanMobile && u.IsDeleted == 0);
-        if (mobileTaken)
+        var mobileTaken = await _authRepository.IsMobileRegisteredAsync(cleanMobile);
+        if (mobileTaken && user.MobileNumber != cleanMobile)
         {
             return BadRequest(new { message = "This mobile number is already registered to another account." });
         }
@@ -393,7 +355,7 @@ public class AuthController : ControllerBase
         user.UpdatedDate = DateTime.UtcNow;
         user.UpdatedBy = user.Id;
 
-        await _context.SaveChangesAsync();
+        await _authRepository.UpdateUserAsync(user);
         _logger.LogInformation("Profile updated successfully for user ID: {UserId}", user.Id);
 
         return Ok(new UserDto

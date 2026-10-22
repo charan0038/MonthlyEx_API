@@ -2,9 +2,8 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.EntityFrameworkCore;
-using MonthExpenses.Api.Data;
 using MonthExpenses.Api.DTOs;
+using MonthExpenses.Api.Interfaces;
 using MonthExpenses.Api.Models;
 
 namespace MonthExpenses.Api.Controllers;
@@ -13,14 +12,9 @@ namespace MonthExpenses.Api.Controllers;
 [Authorize]
 [Route("api/[controller]")]
 [EnableRateLimiting("api-policy")]
-public class CategoriesController : ControllerBase
+public class CategoriesController(ICategoryRepository categoryRepository) : ControllerBase
 {
-    private readonly ExpenseDbContext _context;
-
-    public CategoriesController(ExpenseDbContext context)
-    {
-        _context = context;
-    }
+    private readonly ICategoryRepository _categoryRepository = categoryRepository;
 
     private int? GetCurrentUserId()
     {
@@ -38,45 +32,7 @@ public class CategoriesController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized(new { message = "User is not authenticated." });
 
-        var query = _context.Categories
-            .Where(c => c.IsDeleted == 0 && (c.IsDefault || c.UserId == userId.Value || (c.UserId == null && c.CreatedBy == 0)));
-
-        if (!string.IsNullOrWhiteSpace(type) && !type.Equals("ALL", StringComparison.OrdinalIgnoreCase))
-        {
-            var typeLower = type.ToLower();
-            query = query.Where(c => c.Type.ToLower() == typeLower);
-        }
-
-        var list = await query
-            .OrderByDescending(c => c.IsDefault)
-            .ThenBy(c => c.Name)
-            .Select(c => new CategoryDto
-            {
-                Id = c.Id,
-                Name = c.Name,
-                Type = c.Type.ToLower(),
-                IconName = c.IconName,
-                Color = c.Color,
-                IsDefault = c.IsDefault,
-                UserId = c.UserId,
-                CreatedBy = c.CreatedBy,
-                Subcategories = c.Subcategories
-                    .Where(s => s.IsDeleted == 0 && (s.IsDefault || s.UserId == userId.Value || (s.UserId == null && s.CreatedBy == 0)))
-                    .OrderByDescending(s => s.IsDefault)
-                    .ThenBy(s => s.Name)
-                    .Select(s => new SubcategoryDto
-                    {
-                        Id = s.Id,
-                        Name = s.Name,
-                        CategoryId = s.CategoryId,
-                        IsDefault = s.IsDefault,
-                        UserId = s.UserId,
-                        CreatedBy = s.CreatedBy
-                    })
-                    .ToList()
-            })
-            .ToListAsync();
-
+        var list = await _categoryRepository.GetCategoriesAsync(type, userId.Value);
         return Ok(list);
     }
 
@@ -95,12 +51,7 @@ public class CategoriesController : ControllerBase
         var cleanType = dto.Type.ToLower();
 
         // Check for duplicates within defaults and this user's custom categories
-        var exists = await _context.Categories.AnyAsync(c =>
-            c.IsDeleted == 0 &&
-            c.Name.ToLower() == cleanName.ToLower() &&
-            c.Type.ToLower() == cleanType &&
-            (c.IsDefault || c.UserId == userId.Value || (c.UserId == null && c.CreatedBy == 0)));
-
+        var exists = await _categoryRepository.CategoryExistsAsync(cleanName, cleanType, userId.Value);
         if (exists)
         {
             return BadRequest(new { message = $"Category '{cleanName}' already exists for {cleanType}." });
@@ -119,19 +70,18 @@ public class CategoriesController : ControllerBase
             IsDeleted = 0
         };
 
-        _context.Categories.Add(category);
-        await _context.SaveChangesAsync();
+        var created = await _categoryRepository.CreateCategoryAsync(category);
 
-        return CreatedAtAction(nameof(GetCategories), new { id = category.Id }, new CategoryDto
+        return CreatedAtAction(nameof(GetCategories), new { id = created.Id }, new CategoryDto
         {
-            Id = category.Id,
-            Name = category.Name,
-            Type = category.Type,
-            IconName = category.IconName,
-            Color = category.Color,
-            IsDefault = category.IsDefault,
-            UserId = category.UserId,
-            CreatedBy = category.CreatedBy,
+            Id = created.Id,
+            Name = created.Name,
+            Type = created.Type,
+            IconName = created.IconName,
+            Color = created.Color,
+            IsDefault = created.IsDefault,
+            UserId = created.UserId,
+            CreatedBy = created.CreatedBy,
             Subcategories = new List<SubcategoryDto>()
         });
     }
@@ -145,21 +95,13 @@ public class CategoriesController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized(new { message = "User is not authenticated." });
 
-        var category = await _context.Categories.FirstOrDefaultAsync(c =>
-            c.Id == id && c.IsDeleted == 0 && !c.IsDefault && (c.UserId == userId.Value || c.CreatedBy == userId.Value));
-
-        if (category == null)
+        var success = await _categoryRepository.DeleteCategoryAsync(id, userId.Value);
+        if (!success)
         {
             return NotFound(new { message = "Category not found or cannot be deleted." });
         }
 
-        category.IsDeleted = 1;
-        category.UpdatedBy = userId.Value;
-        category.UpdatedDate = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return Ok(new { message = $"Category '{category.Name}' deleted successfully." });
+        return Ok(new { message = "Category deleted successfully." });
     }
 
     /// <summary>
@@ -173,22 +115,14 @@ public class CategoriesController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized(new { message = "User is not authenticated." });
 
-        var category = await _context.Categories.FirstOrDefaultAsync(c =>
-            c.Id == categoryId && c.IsDeleted == 0 && (c.IsDefault || c.UserId == userId.Value || (c.UserId == null && c.CreatedBy == 0)));
-
+        var category = await _categoryRepository.GetCategoryByIdAsync(categoryId, userId.Value);
         if (category == null)
         {
             return NotFound(new { message = "Category not found." });
         }
 
         var cleanName = dto.Name.Trim();
-
-        var exists = await _context.Subcategories.AnyAsync(s =>
-            s.CategoryId == categoryId &&
-            s.IsDeleted == 0 &&
-            s.Name.ToLower() == cleanName.ToLower() &&
-            (s.IsDefault || s.UserId == userId.Value || (s.UserId == null && s.CreatedBy == 0)));
-
+        var exists = await _categoryRepository.SubcategoryExistsAsync(categoryId, cleanName, userId.Value);
         if (exists)
         {
             return BadRequest(new { message = $"Subcategory '{cleanName}' already exists under '{category.Name}'." });
@@ -205,17 +139,16 @@ public class CategoriesController : ControllerBase
             IsDeleted = 0
         };
 
-        _context.Subcategories.Add(subcategory);
-        await _context.SaveChangesAsync();
+        var created = await _categoryRepository.CreateSubcategoryAsync(subcategory);
 
         return Ok(new SubcategoryDto
         {
-            Id = subcategory.Id,
-            Name = subcategory.Name,
-            CategoryId = subcategory.CategoryId,
-            IsDefault = subcategory.IsDefault,
-            UserId = subcategory.UserId,
-            CreatedBy = subcategory.CreatedBy
+            Id = created.Id,
+            Name = created.Name,
+            CategoryId = created.CategoryId,
+            IsDefault = created.IsDefault,
+            UserId = created.UserId,
+            CreatedBy = created.CreatedBy
         });
     }
 
@@ -228,20 +161,12 @@ public class CategoriesController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized(new { message = "User is not authenticated." });
 
-        var subcategory = await _context.Subcategories.FirstOrDefaultAsync(s =>
-            s.Id == id && s.IsDeleted == 0 && !s.IsDefault && (s.UserId == userId.Value || s.CreatedBy == userId.Value));
-
-        if (subcategory == null)
+        var success = await _categoryRepository.DeleteSubcategoryAsync(id, userId.Value);
+        if (!success)
         {
             return NotFound(new { message = "Subcategory not found or cannot be deleted." });
         }
 
-        subcategory.IsDeleted = 1;
-        subcategory.UpdatedBy = userId.Value;
-        subcategory.UpdatedDate = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return Ok(new { message = $"Subcategory '{subcategory.Name}' deleted successfully." });
+        return Ok(new { message = "Subcategory deleted successfully." });
     }
 }

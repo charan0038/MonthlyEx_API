@@ -5,19 +5,25 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using MonthExpenses.Api.Data;
+using MonthExpenses.Api.Interfaces;
+using MonthExpenses.Api.Repositories;
 using MonthExpenses.Api.Services;
 using Microsoft.OpenApi.Models;
 EnsureNeonProxyRunning();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 2. Add PostgreSQL DbContext
+// 1. Add PostgreSQL DbContext
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
 builder.Services.AddDbContext<ExpenseDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// 2. Register Token Service
+// 2. Register Repositories and Services
 builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddScoped<ITransactionRepository, TransactionRepository>();
+builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
+builder.Services.AddScoped<IBudgetRepository, BudgetRepository>();
+builder.Services.AddScoped<IAuthRepository, AuthRepository>();
 
 // 3. Configure JWT Authentication
 var jwtKey = builder.Configuration["Jwt:Key"] ?? "KharchaSecureJwtTokenKey2026_WithHighEntropyAtLeast256BitsLong!";

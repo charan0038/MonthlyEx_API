@@ -20,68 +20,7 @@ public class ExpenseDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-
-        // Transaction indexes & query filters
-        modelBuilder.Entity<Transaction>(entity =>
-        {
-            entity.HasIndex(t => t.Date);
-            entity.HasIndex(t => t.Type);
-            entity.HasIndex(t => t.CategoryId);
-            entity.HasIndex(t => t.SubcategoryId);
-            entity.HasIndex(t => t.CreatedBy);
-            entity.HasIndex(t => t.IsDeleted);
-
-            entity.HasOne(t => t.Category)
-                  .WithMany()
-                  .HasForeignKey(t => t.CategoryId)
-                  .OnDelete(DeleteBehavior.Restrict);
-
-            entity.HasOne(t => t.SubcategoryEntity)
-                  .WithMany()
-                  .HasForeignKey(t => t.SubcategoryId)
-                  .OnDelete(DeleteBehavior.SetNull);
-        });
-
-        // Budget indexes
-        modelBuilder.Entity<MonthlyBudget>(entity =>
-        {
-            entity.HasIndex(b => new { b.MonthYear, b.CreatedBy });
-            entity.HasIndex(b => b.IsDeleted);
-        });
-
-        // User indexes
-        modelBuilder.Entity<User>(entity =>
-        {
-            entity.HasIndex(u => u.MobileNumber).IsUnique();
-            entity.HasIndex(u => u.IsDeleted);
-        });
-
-        // RefreshToken indexes
-        modelBuilder.Entity<RefreshToken>(entity =>
-        {
-            entity.HasIndex(r => r.Token).IsUnique();
-            entity.HasIndex(r => r.UserId);
-            entity.HasIndex(r => r.IsDeleted);
-        });
-
-        // Category indexes
-        modelBuilder.Entity<Category>(entity =>
-        {
-            entity.HasIndex(c => new { c.Name, c.Type, c.CreatedBy });
-            entity.HasIndex(c => c.IsDeleted);
-        });
-
-        // Subcategory indexes & relationship
-        modelBuilder.Entity<Subcategory>(entity =>
-        {
-            entity.HasIndex(s => new { s.CategoryId, s.Name, s.CreatedBy });
-            entity.HasIndex(s => s.IsDeleted);
-
-            entity.HasOne(s => s.Category)
-                  .WithMany(c => c.Subcategories)
-                  .HasForeignKey(s => s.CategoryId)
-                  .OnDelete(DeleteBehavior.Cascade);
-        });
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(ExpenseDbContext).Assembly);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
