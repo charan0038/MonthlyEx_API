@@ -67,11 +67,6 @@ public class ExpenseDbContext : DbContext
                 await SaveChangesAsync();
             }
         }
-        else
-        {
-            adminUser.PasswordHash = PasswordHelper.HashPassword("123456");
-            await SaveChangesAsync();
-        }
 
         // 2. Ensure default Categories exist
         if (!await Categories.AnyAsync())

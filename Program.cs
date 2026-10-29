@@ -9,14 +9,24 @@ using MonthExpenses.Api.Interfaces;
 using MonthExpenses.Api.Repositories;
 using MonthExpenses.Api.Services;
 using Microsoft.OpenApi.Models;
+using Polly;
+
 EnsureNeonProxyRunning();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Add PostgreSQL DbContext
+// 1. Add PostgreSQL DbContext with Neon Serverless Retry Strategy
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")!;
 builder.Services.AddDbContext<ExpenseDbContext>(options =>
-    options.UseNpgsql(connectionString));
+    options.UseNpgsql(connectionString, npgsqlOptions =>
+    {
+        // Resiliency for Neon PostgreSQL serverless compute cold starts and sleep-wake cycles
+        npgsqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(10),
+            errorCodesToAdd: null);
+        npgsqlOptions.CommandTimeout(30);
+    }));
 
 // 2. Register Repositories and Services
 builder.Services.AddScoped<ITokenService, TokenService>();
@@ -24,6 +34,9 @@ builder.Services.AddScoped<ITransactionRepository, TransactionRepository>();
 builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
 builder.Services.AddScoped<IBudgetRepository, BudgetRepository>();
 builder.Services.AddScoped<IAuthRepository, AuthRepository>();
+
+// Neon Serverless Database Keep-Alive Background Service
+builder.Services.AddHostedService<NeonKeepAliveService>();
 
 // 3. Configure JWT Authentication
 var jwtKey = builder.Configuration["Jwt:Key"] ?? "KharchaSecureJwtTokenKey2026_WithHighEntropyAtLeast256BitsLong!";
@@ -218,6 +231,34 @@ app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// 9. Lightweight Health Check & Keep-Alive Endpoint
+// Accessible without authentication so uptime pingers (cron-job.org / UptimeRobot) can keep Render & Neon awake 24/7
+app.MapGet("/api/health", async (ExpenseDbContext db) =>
+{
+    try
+    {
+        // Executes a lightweight query (0ms execution) to keep Neon Postgres connection & compute awake
+        await db.Database.ExecuteSqlRawAsync("SELECT 1;");
+        return Results.Ok(new
+        {
+            status = "healthy",
+            database = "connected",
+            service = "MonthExpenses.Api",
+            timestamp = DateTime.UtcNow
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new
+        {
+            status = "degraded",
+            database = "error",
+            error = ex.Message,
+            timestamp = DateTime.UtcNow
+        }, statusCode: 500);
+    }
+}).AllowAnonymous();
 
 app.MapControllers();
 

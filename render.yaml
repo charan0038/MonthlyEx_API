@@ -7,7 +7,7 @@ services:
     dockerContext: .
     envVars:
       - key: ConnectionStrings__DefaultConnection
-        value: Host=ep-wispy-darkness-azf1ttkm-pooler.c-3.ap-southeast-1.aws.neon.tech;Port=5432;Database=neondb;Username=neondb_owner;Password=npg_vpyK6MrjC9bs;SSL Mode=Require;Trust Server Certificate=true
+        value: Host=ep-wispy-darkness-azf1ttkm-pooler.c-3.ap-southeast-1.aws.neon.tech;Port=5432;Database=neondb;Username=neondb_owner;Password=npg_vpyK6MrjC9bs;SSL Mode=Require;Trust Server Certificate=true;Keepalive=30;Pooling=true;Minimum Pool Size=1;Maximum Pool Size=20;
       - key: ASPNETCORE_ENVIRONMENT
         value: Production
       - key: Jwt__Key
