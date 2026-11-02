@@ -152,6 +152,11 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
             await _context.Entry(transaction).Reference(t => t.SubcategoryEntity).LoadAsync();
         }
 
+        if (transaction.Type == "income")
+        {
+            await SyncBudgetWithIncomeAsync(transaction.Date, transaction.CreatedBy);
+        }
+
         return transaction;
     }
 
@@ -165,6 +170,8 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
         {
             await _context.Entry(transaction).Reference(t => t.SubcategoryEntity).LoadAsync();
         }
+
+        await SyncBudgetWithIncomeAsync(transaction.Date, transaction.CreatedBy);
 
         return transaction;
     }
@@ -181,7 +188,47 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
         transaction.UpdatedDate = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
+
+        if (transaction.Type == "income")
+        {
+            await SyncBudgetWithIncomeAsync(transaction.Date, userId);
+        }
+
         return true;
+    }
+
+    private async Task SyncBudgetWithIncomeAsync(string date, int userId)
+    {
+        if (string.IsNullOrWhiteSpace(date) || date.Length < 7) return;
+        var monthYear = date[..7];
+
+        var totalMonthIncome = await _context.Transactions
+            .Where(t => t.IsDeleted == 0 && t.Date.StartsWith(monthYear) && t.Type == "income" && (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)))
+            .SumAsync(t => t.Amount);
+
+        var budgetRecord = await _context.Budgets.FirstOrDefaultAsync(b =>
+            b.IsDeleted == 0 && b.MonthYear == monthYear && (b.CreatedBy == userId || (userId == 1 && b.CreatedBy == 0)));
+
+        if (budgetRecord == null && totalMonthIncome > 0)
+        {
+            _context.Budgets.Add(new MonthlyBudget
+            {
+                MonthYear = monthYear,
+                Amount = totalMonthIncome,
+                UserId = userId,
+                CreatedBy = userId,
+                CreatedDate = DateTime.UtcNow,
+                IsDeleted = 0
+            });
+            await _context.SaveChangesAsync();
+        }
+        else if (budgetRecord != null && totalMonthIncome > budgetRecord.Amount)
+        {
+            budgetRecord.Amount = totalMonthIncome;
+            budgetRecord.UpdatedBy = userId;
+            budgetRecord.UpdatedDate = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
     }
 
     public async Task<MonthlySummaryDto> GetMonthlySummaryAsync(string monthYear, int userId)
@@ -194,10 +241,10 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
 
         var budgetRecord = await _context.Budgets.FirstOrDefaultAsync(b =>
             b.IsDeleted == 0 && b.MonthYear == monthYear && (b.CreatedBy == userId || (userId == 1 && b.CreatedBy == 0)));
-        var budgetLimit = budgetRecord?.Amount ?? 0m;
+        var baseBudget = budgetRecord?.Amount ?? 0m;
 
         // If no budget has been set (budget is 0), clean up any previously auto-generated budget transactions
-        if (budgetLimit <= 0)
+        if (baseBudget <= 0)
         {
             var ghostTxs = currentTxs.Where(t =>
                 t.Type == "income" &&
@@ -220,6 +267,30 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
         var totalIncome = currentTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
         var totalExpense = currentTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
         var netBalance = totalIncome - totalExpense;
+
+        // When user adds income, it automatically adds into the monthly budget limit
+        var budgetLimit = Math.Max(baseBudget, totalIncome);
+        if (budgetRecord != null && totalIncome > budgetRecord.Amount)
+        {
+            budgetRecord.Amount = totalIncome;
+            budgetRecord.UpdatedBy = userId;
+            budgetRecord.UpdatedDate = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
+        else if (budgetRecord == null && totalIncome > 0)
+        {
+            _context.Budgets.Add(new MonthlyBudget
+            {
+                MonthYear = monthYear,
+                Amount = totalIncome,
+                UserId = userId,
+                CreatedBy = userId,
+                CreatedDate = DateTime.UtcNow,
+                IsDeleted = 0
+            });
+            await _context.SaveChangesAsync();
+        }
+
         var budgetLeft = budgetLimit > 0 ? budgetLimit - totalExpense : 0m;
         var budgetPercent = budgetLimit > 0 ? (double)(totalExpense / budgetLimit) * 100.0 : 0.0;
 
@@ -346,7 +417,8 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
 
             var mIncome = mTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
             var mExpense = mTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
-            var mBudget = yearBudgets.FirstOrDefault(b => b.MonthYear == mKey)?.Amount ?? 0m;
+            var mBaseBudget = yearBudgets.FirstOrDefault(b => b.MonthYear == mKey)?.Amount ?? 0m;
+            var mBudget = Math.Max(mBaseBudget, mIncome);
             var topCat = mTxs
                 .Where(t => t.Type == "expense")
                 .GroupBy(t => t.Category?.Name ?? "Other")

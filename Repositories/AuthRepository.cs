@@ -44,6 +44,7 @@ public class AuthRepository(ExpenseDbContext context) : IAuthRepository
     {
         var clean = identifier.Trim();
         return await _context.Users.FirstOrDefaultAsync(u =>
+     
             (u.MobileNumber == clean || u.FullName.ToLower() == clean.ToLower()) && u.IsDeleted == 0);
     }
 

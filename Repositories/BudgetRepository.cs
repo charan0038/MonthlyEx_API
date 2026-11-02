@@ -15,18 +15,30 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
         var budget = await _context.Budgets.FirstOrDefaultAsync(b =>
             b.IsDeleted == 0 &&
             b.MonthYear == monthYear &&
-            b.CreatedBy == userId);
+            (b.CreatedBy == userId || (userId == 1 && b.CreatedBy == 0)));
+
+        var totalMonthIncome = await _context.Transactions
+            .Where(t => t.IsDeleted == 0 && t.Date.StartsWith(monthYear) && t.Type == "income" && (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)))
+            .SumAsync(t => t.Amount);
 
         if (budget == null)
         {
             return new MonthlyBudget
             {
                 MonthYear = monthYear,
-                Amount = 0m,
+                Amount = totalMonthIncome,
                 CreatedBy = userId,
                 CreatedDate = DateTime.UtcNow,
                 IsDeleted = 0
             };
+        }
+
+        if (totalMonthIncome > budget.Amount)
+        {
+            budget.Amount = totalMonthIncome;
+            budget.UpdatedBy = userId;
+            budget.UpdatedDate = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
         }
 
         return budget;
