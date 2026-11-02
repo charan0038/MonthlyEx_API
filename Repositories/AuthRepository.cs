@@ -90,8 +90,10 @@ public class AuthRepository(ExpenseDbContext context) : IAuthRepository
     public async Task RevokeActiveUserRefreshTokensAsync(int userId)
     {
         var activeTokens = await _context.RefreshTokens
-            .Where(r => r.UserId == userId && r.RevokedAt == null && r.ExpiresAt > DateTime.UtcNow)
-            .ToListAsync();
+                                        .Where(r => r.UserId == userId 
+                                                 && r.RevokedAt == null 
+                                                 && r.ExpiresAt > DateTime.UtcNow)
+                                        .ToListAsync();
 
         foreach (var t in activeTokens)
         {
