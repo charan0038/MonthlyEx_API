@@ -82,24 +82,26 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
                     c.IsDeleted == 0 &&
                     c.Type == "income" &&
                     (c.IsDefault || c.UserId == userId || c.CreatedBy == userId)) ??
-                    await _context.Categories.FirstOrDefaultAsync(c => c.Type == "income");
+                    await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0 && c.Type == "income") ??
+                    await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0);
 
-                int catId = incomeCat?.Id ?? 9;
-
-                var newIncomeTx = new Transaction
+                if (incomeCat != null)
                 {
-                    Id = Guid.NewGuid().ToString("N"),
-                    Type = "income",
-                    Amount = amount,
-                    CategoryId = catId,
-                    Date = $"{monthYear}-01",
-                    Note = "Monthly Budget",
-                    PaymentMethod = "UPI",
-                    CreatedBy = userId,
-                    CreatedDate = DateTime.UtcNow,
-                    IsDeleted = 0
-                };
-                _context.Transactions.Add(newIncomeTx);
+                    var newIncomeTx = new Transaction
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        Type = "income",
+                        Amount = amount,
+                        CategoryId = incomeCat.Id,
+                        Date = $"{monthYear}-01",
+                        Note = "Monthly Budget",
+                        PaymentMethod = "UPI",
+                        CreatedBy = userId,
+                        CreatedDate = DateTime.UtcNow,
+                        IsDeleted = 0
+                    };
+                    _context.Transactions.Add(newIncomeTx);
+                }
             }
         }
 
@@ -130,18 +132,26 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
         var expenseCat = await _context.Categories.FirstOrDefaultAsync(c =>
             c.IsDeleted == 0 &&
             c.Type == "expense" &&
-            string.Equals(c.Name, "other", StringComparison.OrdinalIgnoreCase) &&
-            (c.IsDefault || c.CreatedBy == userId)) ??
-            await _context.Categories.FirstOrDefaultAsync(c => c.Type == "expense");
+            c.Name.ToLower() == "other" &&
+            (c.IsDefault || c.CreatedBy == userId || c.UserId == userId)) ??
+            await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0 && c.Type == "expense") ??
+            await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0);
 
-        int catId = expenseCat?.Id ?? 1;
+        if (expenseCat == null)
+        {
+            return new CashCheckoutResult
+            {
+                Success = false,
+                Message = "No category found for cash checkout."
+            };
+        }
 
         var tx = new Transaction
         {
             Id = Guid.NewGuid().ToString("N"),
             Type = "expense",
             Amount = amountToCheckout,
-            CategoryId = catId,
+            CategoryId = expenseCat.Id,
             Date = DateTime.UtcNow.ToString("yyyy-MM-dd").StartsWith(monthYear)
                 ? DateTime.UtcNow.ToString("yyyy-MM-dd")
                 : $"{monthYear}-28",
@@ -200,9 +210,27 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
         var otherCat = await _context.Categories.FirstOrDefaultAsync(c =>
             c.IsDeleted == 0 &&
             c.Type == "expense" &&
-            string.Equals(c.Name, "other", StringComparison.OrdinalIgnoreCase) &&
-            (c.IsDefault || c.CreatedBy == userId)) ??
-            await _context.Categories.FirstOrDefaultAsync(c => c.Type == "expense");
+            c.Name.ToLower() == "other" &&
+            (c.IsDefault || c.CreatedBy == userId || c.UserId == userId)) ??
+            await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0 && c.Type == "expense") ??
+            await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0);
+
+        // 2. Next month: Opening Balance Income
+        var incomeCat = await _context.Categories.FirstOrDefaultAsync(c =>
+            c.IsDeleted == 0 &&
+            c.Type == "income" &&
+            (c.IsDefault || c.CreatedBy == userId || c.UserId == userId)) ??
+            await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0 && c.Type == "income") ??
+            await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0);
+
+        if (otherCat == null || incomeCat == null)
+        {
+            return new RolloverBalanceResult
+            {
+                Success = false,
+                Message = "Required categories could not be found."
+            };
+        }
 
         int daysInMonth = DateTime.DaysInMonth(currentMonthDate.Year, currentMonthDate.Month);
         var transferOutTx = new Transaction
@@ -210,7 +238,7 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
             Id = Guid.NewGuid().ToString("N"),
             Type = "expense",
             Amount = amountToRollover,
-            CategoryId = otherCat?.Id ?? 1,
+            CategoryId = otherCat.Id,
             Date = $"{monthYear}-{daysInMonth:D2}",
             Note = $"Transferred to {nextMonthKey} Opening Balance",
             PaymentMethod = "Cash",
@@ -220,19 +248,12 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
         };
         _context.Transactions.Add(transferOutTx);
 
-        // 2. Next month: Opening Balance Income
-        var incomeCat = await _context.Categories.FirstOrDefaultAsync(c =>
-            c.IsDeleted == 0 &&
-            c.Type == "income" &&
-            (c.IsDefault || c.CreatedBy == userId)) ??
-            await _context.Categories.FirstOrDefaultAsync(c => c.Type == "income");
-
         var openingIncomeTx = new Transaction
         {
             Id = Guid.NewGuid().ToString("N"),
             Type = "income",
             Amount = amountToRollover,
-            CategoryId = incomeCat?.Id ?? 1,
+            CategoryId = incomeCat.Id,
             Date = $"{nextMonthKey}-01",
             Note = $"Opening Balance from {monthYear}",
             PaymentMethod = "Cash",

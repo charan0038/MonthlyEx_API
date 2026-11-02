@@ -21,61 +21,80 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
 
         if (!string.IsNullOrWhiteSpace(filter.MonthYear))
         {
-            query = query.Where(t => t.Date.StartsWith(filter.MonthYear));
+            var cleanMonthYear = filter.MonthYear.Trim();
+            query = query.Where(t => t.Date.StartsWith(cleanMonthYear));
         }
 
         if (!string.IsNullOrWhiteSpace(filter.StartDate))
         {
-            query = query.Where(t => string.Compare(t.Date, filter.StartDate) >= 0);
+            var cleanStart = filter.StartDate.Trim();
+            query = query.Where(t => string.Compare(t.Date, cleanStart) >= 0);
         }
 
         if (!string.IsNullOrWhiteSpace(filter.EndDate))
         {
-            query = query.Where(t => string.Compare(t.Date, filter.EndDate) <= 0);
+            var cleanEnd = filter.EndDate.Trim();
+            query = query.Where(t => string.Compare(t.Date, cleanEnd) <= 0);
         }
 
         if (!string.IsNullOrWhiteSpace(filter.Category) && !filter.Category.Equals("ALL", StringComparison.OrdinalIgnoreCase))
         {
-            if (int.TryParse(filter.Category, out var catId))
+            var cleanCat = filter.Category.Trim();
+            if (int.TryParse(cleanCat, out var catId))
             {
                 query = query.Where(t => t.CategoryId == catId);
             }
             else
             {
-                query = query.Where(t => t.Category != null && string.Equals(t.Category.Name, filter.Category, StringComparison.OrdinalIgnoreCase));
+                var lowerCat = cleanCat.ToLower();
+                // Find all category IDs matching this name (handles dynamic custom categories + defaults)
+                var matchingCatIds = await _context.Categories
+                    .Where(c => c.Name.ToLower() == lowerCat && c.IsDeleted == 0)
+                    .Select(c => c.Id)
+                    .ToListAsync();
+
+                query = query.Where(t => (t.Category != null && t.Category.Name.ToLower() == lowerCat) ||
+                                         matchingCatIds.Contains(t.CategoryId));
             }
         }
 
         if (!string.IsNullOrWhiteSpace(filter.Subcategory) && !filter.Subcategory.Equals("ALL", StringComparison.OrdinalIgnoreCase))
         {
-            if (int.TryParse(filter.Subcategory, out var subcatId))
+            var cleanSub = filter.Subcategory.Trim();
+            if (int.TryParse(cleanSub, out var subcatId))
             {
                 query = query.Where(t => t.SubcategoryId == subcatId);
             }
             else
             {
-                query = query.Where(t => t.Subcategory != null && string.Equals(t.Subcategory, filter.Subcategory, StringComparison.OrdinalIgnoreCase));
+                var lowerSub = cleanSub.ToLower();
+                query = query.Where(t => (t.Subcategory != null && t.Subcategory.ToLower() == lowerSub) ||
+                                         (t.SubcategoryEntity != null && t.SubcategoryEntity.Name.ToLower() == lowerSub));
             }
         }
 
         if (!string.IsNullOrWhiteSpace(filter.Type) && !filter.Type.Equals("ALL", StringComparison.OrdinalIgnoreCase))
         {
-            query = query.Where(t => string.Equals(t.Type, filter.Type, StringComparison.OrdinalIgnoreCase));
+            var lowerType = filter.Type.Trim().ToLower();
+            query = query.Where(t => t.Type.ToLower() == lowerType);
         }
 
         if (!string.IsNullOrWhiteSpace(filter.Payment) && !filter.Payment.Equals("ALL", StringComparison.OrdinalIgnoreCase))
         {
-            query = query.Where(t => string.Equals(t.PaymentMethod, filter.Payment, StringComparison.OrdinalIgnoreCase));
+            var lowerPayment = filter.Payment.Trim().ToLower();
+            query = query.Where(t => t.PaymentMethod.ToLower() == lowerPayment);
         }
 
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
-            query = query.Where(t => (t.Note != null && t.Note.Contains(filter.Search, StringComparison.OrdinalIgnoreCase)) ||
-                                     (t.Category != null && t.Category.Name.Contains(filter.Search, StringComparison.OrdinalIgnoreCase)) ||
-                                     (t.Subcategory != null && t.Subcategory.Contains(filter.Search, StringComparison.OrdinalIgnoreCase)));
+            var lowerSearch = filter.Search.Trim().ToLower();
+            query = query.Where(t => (t.Note != null && t.Note.ToLower().Contains(lowerSearch)) ||
+                                     (t.Category != null && t.Category.Name.ToLower().Contains(lowerSearch)) ||
+                                     (t.Subcategory != null && t.Subcategory.ToLower().Contains(lowerSearch)) ||
+                                     (t.PaymentMethod != null && t.PaymentMethod.ToLower().Contains(lowerSearch)));
         }
 
-        query = filter.SortBy switch
+        query = (filter.SortBy?.Trim().ToLower()) switch
         {
             "date-asc" => query.OrderBy(t => t.Date).ThenBy(t => t.CreatedDate),
             "amount-desc" => query.OrderByDescending(t => t.Amount),
@@ -96,9 +115,9 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
 
     public async Task<Category?> FindCategoryByNameAsync(string categoryName, int userId)
     {
-        var clean = categoryName.Trim();
+        var clean = categoryName.Trim().ToLower();
         return await _context.Categories.FirstOrDefaultAsync(c =>
-            string.Equals(c.Name, clean, StringComparison.OrdinalIgnoreCase) &&
+            c.Name.ToLower() == clean &&
             c.IsDeleted == 0 &&
             (c.IsDefault || c.UserId == userId || c.CreatedBy == userId || (userId == 1 && c.CreatedBy == 0)));
     }
@@ -114,9 +133,10 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
 
     public async Task<Subcategory?> FindSubcategoryByNameAsync(int categoryId, string subcategoryName, int userId)
     {
+        var cleanSub = subcategoryName.Trim().ToLower();
         return await _context.Subcategories.FirstOrDefaultAsync(s =>
             s.CategoryId == categoryId &&
-            string.Equals(s.Name, subcategoryName, StringComparison.OrdinalIgnoreCase) &&
+            s.Name.ToLower() == cleanSub &&
             s.IsDeleted == 0 &&
             (s.IsDefault || s.UserId == userId || s.CreatedBy == userId || (userId == 1 && s.CreatedBy == 0)));
     }
