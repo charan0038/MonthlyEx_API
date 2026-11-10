@@ -87,6 +87,61 @@ public class CategoriesController(ICategoryRepository categoryRepository) : Cont
     }
 
     /// <summary>
+    /// Update a user-created custom category.
+    /// </summary>
+    [HttpPut("{id}")]
+    public async Task<ActionResult<CategoryDto>> UpdateCategory(int id, [FromBody] UpdateCategoryDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized(new { message = "User is not authenticated." });
+
+        var category = await _categoryRepository.GetCategoryByIdAsync(id, userId.Value);
+        if (category == null || category.IsDefault || (category.UserId != userId.Value && category.CreatedBy != userId.Value))
+        {
+            return NotFound(new { message = "Category not found or default categories cannot be edited." });
+        }
+
+        var cleanName = dto.Name.Trim();
+        var exists = await _categoryRepository.CategoryExistsAsync(cleanName, category.Type, userId.Value, id);
+        if (exists)
+        {
+            return BadRequest(new { message = $"Category '{cleanName}' already exists for {category.Type}." });
+        }
+
+        var updated = await _categoryRepository.UpdateCategoryAsync(id, cleanName, dto.IconName, dto.Color, userId.Value);
+        if (updated == null)
+        {
+            return StatusCode(500, new { message = "Failed to update category." });
+        }
+
+        return Ok(new CategoryDto
+        {
+            Id = updated.Id,
+            Name = updated.Name,
+            Type = updated.Type,
+            IconName = updated.IconName,
+            Color = updated.Color,
+            IsDefault = updated.IsDefault,
+            UserId = updated.UserId,
+            CreatedBy = updated.CreatedBy,
+            Subcategories = (updated.Subcategories ?? new List<Subcategory>())
+                .Where(s => s.IsDeleted == 0 && (s.IsDefault || s.UserId == userId || (s.UserId == null && s.CreatedBy == 0)))
+                .Select(s => new SubcategoryDto
+                {
+                    Id = s.Id,
+                    Name = s.Name,
+                    CategoryId = s.CategoryId,
+                    IsDefault = s.IsDefault,
+                    UserId = s.UserId,
+                    CreatedBy = s.CreatedBy
+                })
+                .ToList()
+        });
+    }
+
+    /// <summary>
     /// Delete a user-created custom category.
     /// </summary>
     [HttpDelete("{id}")]

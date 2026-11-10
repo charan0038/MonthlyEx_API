@@ -19,6 +19,19 @@ public class CreateCategoryDto
     public string Color { get; set; } = "#6366f1";
 }
 
+public class UpdateCategoryDto
+{
+    [Required(ErrorMessage = "Category name is required.")]
+    [MaxLength(50)]
+    public string Name { get; set; } = string.Empty;
+
+    [MaxLength(50)]
+    public string IconName { get; set; } = "Sparkles";
+
+    [MaxLength(20)]
+    public string Color { get; set; } = "#6366f1";
+}
+
 public class SubcategoryDto
 {
     public int Id { get; set; }

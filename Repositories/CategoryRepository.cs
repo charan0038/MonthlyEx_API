@@ -58,14 +58,15 @@ public class CategoryRepository(ExpenseDbContext context) : ICategoryRepository
             c.Id == id && c.IsDeleted == 0 && (c.IsDefault || c.UserId == userId || (c.UserId == null && c.CreatedBy == 0)));
     }
 
-    public async Task<bool> CategoryExistsAsync(string name, string type, int userId)
+    public async Task<bool> CategoryExistsAsync(string name, string type, int userId, int? excludeId = null)
     {
-        var cleanName = name.Trim();
+        var cleanName = name.Trim().ToLower();
         var cleanType = type.ToLower();
 
         return await _context.Categories.AnyAsync(c =>
             c.IsDeleted == 0 &&
-            c.Name.ToLower() == cleanName.ToLower() &&
+            (!excludeId.HasValue || c.Id != excludeId.Value) &&
+            c.Name.ToLower() == cleanName &&
             c.Type.ToLower() == cleanType &&
             (c.IsDefault || c.UserId == userId || (c.UserId == null && c.CreatedBy == 0)));
     }
@@ -73,6 +74,26 @@ public class CategoryRepository(ExpenseDbContext context) : ICategoryRepository
     public async Task<Category> CreateCategoryAsync(Category category)
     {
         _context.Categories.Add(category);
+        await _context.SaveChangesAsync();
+        return category;
+    }
+
+    public async Task<Category?> UpdateCategoryAsync(int id, string name, string iconName, string color, int userId)
+    {
+        var category = await _context.Categories
+            .Include(c => c.Subcategories)
+            .FirstOrDefaultAsync(c =>
+                c.Id == id && c.IsDeleted == 0 && !c.IsDefault && (c.UserId == userId || c.CreatedBy == userId));
+
+        if (category == null) return null;
+
+        var cleanName = name.Trim();
+        category.Name = cleanName;
+        category.IconName = string.IsNullOrWhiteSpace(iconName) ? "Sparkles" : iconName.Trim();
+        category.Color = string.IsNullOrWhiteSpace(color) ? "#6366f1" : color.Trim();
+        category.UpdatedBy = userId;
+        category.UpdatedDate = DateTime.UtcNow;
+
         await _context.SaveChangesAsync();
         return category;
     }

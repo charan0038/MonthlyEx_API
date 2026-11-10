@@ -7,8 +7,9 @@ public interface ICategoryRepository
 {
     Task<IEnumerable<CategoryDto>> GetCategoriesAsync(string? type, int userId);
     Task<Category?> GetCategoryByIdAsync(int id, int userId);
-    Task<bool> CategoryExistsAsync(string name, string type, int userId);
+    Task<bool> CategoryExistsAsync(string name, string type, int userId, int? excludeId = null);
     Task<Category> CreateCategoryAsync(Category category);
+    Task<Category?> UpdateCategoryAsync(int id, string name, string iconName, string color, int userId);
     Task<bool> DeleteCategoryAsync(int id, int userId);
 
     Task<Subcategory?> GetSubcategoryByIdAsync(int id, int userId);
