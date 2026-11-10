@@ -264,6 +264,21 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
             }
         }
 
+        // Purge legacy rollover transfer-out transactions so they NEVER count as user expenses
+        var legacyRolloverTxs = currentTxs.Where(t => t.Type == "expense" && t.Note != null &&
+            t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance")).ToList();
+        if (legacyRolloverTxs.Count > 0)
+        {
+            foreach (var rt in legacyRolloverTxs)
+            {
+                rt.IsDeleted = 1;
+                rt.UpdatedBy = userId;
+                rt.UpdatedDate = DateTime.UtcNow;
+            }
+            await _context.SaveChangesAsync();
+            currentTxs.RemoveAll(t => legacyRolloverTxs.Contains(t));
+        }
+
         var totalIncome = currentTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
         var totalExpense = currentTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
         var netBalance = totalIncome - totalExpense;
@@ -398,6 +413,10 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
             .Where(t => t.IsDeleted == 0 && t.Date.StartsWith(yearPrefix) && (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)))
             .OrderBy(t => t.Date)
             .ToListAsync();
+
+        // Exclude legacy rollover transfer-out transactions so they never inflate yearly expenses
+        yearTxs.RemoveAll(t => t.Type == "expense" && t.Note != null &&
+            t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance"));
 
         var yearBudgets = await _context.Budgets
             .Where(b => b.IsDeleted == 0 && b.MonthYear.StartsWith(yearPrefix) && (b.CreatedBy == userId || (userId == 1 && b.CreatedBy == 0)))
@@ -558,11 +577,15 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
                         (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)))
             .ToListAsync();
 
-        var prevTotalExpense = prevWeekTxs.Sum(t => t.Amount);
+        var prevTotalExpense = prevWeekTxs
+            .Where(t => !(t.Note != null && t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance")))
+            .Sum(t => t.Amount);
 
-        // Filter out auto-budget transactions from income
-        var validTxs = weekTxs.Where(t => !(t.Type == "income" &&
-            (t.Note == "Monthly Budget" || t.Note == "Monthly Budget Allocation" || t.Note == "Opening Budget"))).ToList();
+        // Filter out auto-budget transactions from income and rollover transfer-out from expenses
+        var validTxs = weekTxs.Where(t =>
+            !(t.Type == "income" && (t.Note == "Monthly Budget" || t.Note == "Monthly Budget Allocation" || t.Note == "Opening Budget")) &&
+            !(t.Type == "expense" && t.Note != null && t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance"))
+        ).ToList();
 
         var totalIncome = validTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
         var totalExpense = validTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);

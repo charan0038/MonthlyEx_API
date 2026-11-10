@@ -204,8 +204,9 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
             .Where(t => t.IsDeleted == 0 && t.Date.StartsWith(monthYear) && (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)))
             .ToListAsync();
 
+        // Calculate real income and real expenses (do NOT treat balance transfers to next month as expenses!)
         var totalIncome = monthTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
-        var totalExpense = monthTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
+        var totalExpense = monthTxs.Where(t => t.Type == "expense" && !(t.Note != null && t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance"))).Sum(t => t.Amount);
         var netBalance = totalIncome - totalExpense;
 
         decimal amountToRollover = amount ?? netBalance;
@@ -218,14 +219,16 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
             };
         }
 
-        // 1. Current month: Transfer out expense
-        var otherCat = await _context.Categories.FirstOrDefaultAsync(c =>
-            c.IsDeleted == 0 &&
-            c.Type == "expense" &&
-            c.Name.ToLower() == "other" &&
-            (c.IsDefault || c.CreatedBy == userId || c.UserId == userId)) ??
-            await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0 && c.Type == "expense") ??
-            await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0);
+        // Soft-delete any legacy rollover transfer-out expense transactions in the current month so expenses stay pure
+        var legacyTransferOuts = monthTxs.Where(t => t.Type == "expense" && t.Note != null && t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance")).ToList();
+        if (legacyTransferOuts.Count > 0)
+        {
+            foreach (var ltx in legacyTransferOuts)
+            {
+                ltx.IsDeleted = 1;
+                ltx.UpdatedDate = DateTime.UtcNow;
+            }
+        }
 
         // 2. Next month: Opening Balance Income
         var incomeCat = await _context.Categories.FirstOrDefaultAsync(c =>
@@ -235,45 +238,48 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
             await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0 && c.Type == "income") ??
             await _context.Categories.FirstOrDefaultAsync(c => c.IsDeleted == 0);
 
-        if (otherCat == null || incomeCat == null)
+        if (incomeCat == null)
         {
             return new RolloverBalanceResult
             {
                 Success = false,
-                Message = "Required categories could not be found."
+                Message = "Income category could not be found."
             };
         }
 
-        int daysInMonth = DateTime.DaysInMonth(currentMonthDate.Year, currentMonthDate.Month);
-        var transferOutTx = new Transaction
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            Type = "expense",
-            Amount = amountToRollover,
-            CategoryId = otherCat.Id,
-            Date = $"{monthYear}-{daysInMonth:D2}",
-            Note = $"Transferred to {nextMonthKey} Opening Balance",
-            PaymentMethod = "Cash",
-            CreatedBy = userId,
-            CreatedDate = DateTime.UtcNow,
-            IsDeleted = 0
-        };
-        _context.Transactions.Add(transferOutTx);
+        // Check if an opening balance income transaction already exists in next month from this month
+        var existingOpeningTx = await _context.Transactions.FirstOrDefaultAsync(t =>
+            t.IsDeleted == 0 &&
+            t.Date.StartsWith(nextMonthKey) &&
+            t.Type == "income" &&
+            t.Note == $"Opening Balance from {monthYear}" &&
+            (t.CreatedBy == userId || (userId == 1 && t.CreatedBy == 0)));
 
-        var openingIncomeTx = new Transaction
+        Transaction openingIncomeTx;
+        if (existingOpeningTx != null)
         {
-            Id = Guid.NewGuid().ToString("N"),
-            Type = "income",
-            Amount = amountToRollover,
-            CategoryId = incomeCat.Id,
-            Date = $"{nextMonthKey}-01",
-            Note = $"Opening Balance from {monthYear}",
-            PaymentMethod = "Cash",
-            CreatedBy = userId,
-            CreatedDate = DateTime.UtcNow,
-            IsDeleted = 0
-        };
-        _context.Transactions.Add(openingIncomeTx);
+            existingOpeningTx.Amount = amountToRollover;
+            existingOpeningTx.UpdatedBy = userId;
+            existingOpeningTx.UpdatedDate = DateTime.UtcNow;
+            openingIncomeTx = existingOpeningTx;
+        }
+        else
+        {
+            openingIncomeTx = new Transaction
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Type = "income",
+                Amount = amountToRollover,
+                CategoryId = incomeCat.Id,
+                Date = $"{nextMonthKey}-01",
+                Note = $"Opening Balance from {monthYear}",
+                PaymentMethod = "Cash",
+                CreatedBy = userId,
+                CreatedDate = DateTime.UtcNow,
+                IsDeleted = 0
+            };
+            _context.Transactions.Add(openingIncomeTx);
+        }
 
         await _context.SaveChangesAsync();
 
@@ -283,7 +289,7 @@ public class BudgetRepository(ExpenseDbContext context) : IBudgetRepository
             Message = $"Successfully transferred ₹{amountToRollover:N0} to {nextMonthKey} as opening balance income.",
             Amount = amountToRollover,
             NextMonth = nextMonthKey,
-            TransferOutTx = transferOutTx,
+            TransferOutTx = null,
             OpeningIncomeTx = openingIncomeTx
         };
     }
