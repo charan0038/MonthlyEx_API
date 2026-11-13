@@ -176,3 +176,4 @@ public class EmisController(IEmiRepository emiRepository, ICategoryRepository ca
         return Ok(history);
     }
 }
+

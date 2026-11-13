@@ -12,3 +12,4 @@ public interface IEmiRepository
     Task<bool> DeleteEmiAsync(int id, int userId);
     Task<List<EmiPaymentItemDto>> GetEmiPaymentHistoryAsync(int categoryId, int userId);
 }
+
