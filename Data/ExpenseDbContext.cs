@@ -16,6 +16,7 @@ public class ExpenseDbContext : DbContext
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Subcategory> Subcategories => Set<Subcategory>();
+    public DbSet<EmiLoan> Emis => Set<EmiLoan>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

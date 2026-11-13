@@ -34,6 +34,7 @@ builder.Services.AddScoped<ITransactionRepository, TransactionRepository>();
 builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
 builder.Services.AddScoped<IBudgetRepository, BudgetRepository>();
 builder.Services.AddScoped<IAuthRepository, AuthRepository>();
+builder.Services.AddScoped<IEmiRepository, EmiRepository>();
 
 // Neon Serverless Database Keep-Alive Background Service
 builder.Services.AddHostedService<NeonKeepAliveService>();
@@ -207,6 +208,26 @@ try
         ALTER TABLE ""Transactions"" ADD COLUMN IF NOT EXISTS ""Subcategory"" VARCHAR(50) NULL;
         CREATE INDEX IF NOT EXISTS ""IX_Subcategories_CategoryId_Name_CreatedBy"" ON ""Subcategories"" (""CategoryId"", ""Name"", ""CreatedBy"");
         CREATE INDEX IF NOT EXISTS ""IX_Transactions_SubcategoryId"" ON ""Transactions"" (""SubcategoryId"");
+
+        CREATE TABLE IF NOT EXISTS ""Emis"" (
+            ""Id"" SERIAL PRIMARY KEY,
+            ""Name"" VARCHAR(100) NOT NULL,
+            ""TotalAmount"" NUMERIC(12, 2) NOT NULL,
+            ""MonthlyAmount"" NUMERIC(12, 2) NOT NULL DEFAULT 0,
+            ""CategoryId"" INTEGER NOT NULL REFERENCES ""Categories""(""Id"") ON DELETE CASCADE,
+            ""StartDate"" VARCHAR(10) NOT NULL,
+            ""DueDay"" INTEGER NOT NULL DEFAULT 5,
+            ""TotalTenorMonths"" INTEGER NOT NULL DEFAULT 12,
+            ""Notes"" VARCHAR(250) NULL,
+            ""UserId"" INTEGER NOT NULL,
+            ""CreatedBy"" INTEGER NOT NULL,
+            ""CreatedDate"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            ""UpdatedBy"" INTEGER NULL,
+            ""UpdatedDate"" TIMESTAMP WITH TIME ZONE NULL,
+            ""IsDeleted"" INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS ""IX_Emis_UserId_IsDeleted"" ON ""Emis"" (""UserId"", ""IsDeleted"");
+        CREATE INDEX IF NOT EXISTS ""IX_Emis_CategoryId"" ON ""Emis"" (""CategoryId"");
     ");
 
     await db.SeedSampleDataAsync();
