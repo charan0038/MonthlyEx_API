@@ -110,12 +110,29 @@ builder.Services.AddRateLimiter(rateLimiterOptions =>
         await context.HttpContext.Response.WriteAsJsonAsync(responseObj, token);
     };
 
-    // Strict policy for Auth endpoints (Login & Register): 5 attempts per minute per IP
+    // Strict policy for Auth endpoints (Login & Register): 5 attempts per minute per IP+User
     rateLimiterOptions.AddPolicy("auth-policy", httpContext =>
     {
         var clientIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+
+        // Read the request body identifier (mobileNumber/username) to make rate limit per-user
+        // Falls back to IP-only if no identifier is found (e.g. register without body)
+        var userIdentifier = "";
+        if (httpContext.Request.Query.ContainsKey("mobileNumber"))
+        {
+            userIdentifier = httpContext.Request.Query["mobileNumber"].ToString();
+        }
+        else if (httpContext.Request.Headers.ContainsKey("X-User-Identifier"))
+        {
+            userIdentifier = httpContext.Request.Headers["X-User-Identifier"].ToString();
+        }
+
+        var partitionKey = string.IsNullOrEmpty(userIdentifier)
+            ? clientIp
+            : $"{clientIp}_{userIdentifier}";
+
         return RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: clientIp,
+            partitionKey: partitionKey,
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 5,

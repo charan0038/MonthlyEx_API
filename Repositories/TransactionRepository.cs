@@ -416,7 +416,15 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
 
         // Exclude legacy rollover transfer-out transactions so they never inflate yearly expenses
         yearTxs.RemoveAll(t => t.Type == "expense" && t.Note != null &&
-            t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance"));
+            (t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance")));
+
+        // Exclude rollover transfer-in opening balance transactions so they NEVER inflate yearly income or savings!
+        yearTxs.RemoveAll(t => t.Type == "income" && t.Note != null &&
+            (t.Note.StartsWith("Opening Balance from ") || (t.Note.Contains("Opening Balance") && t.Note.Contains("from")) || t.Note.StartsWith("Transferred from ")));
+
+        // Exclude any transactions explicitly categorized under 'Transfer' or 'Transfers'
+        yearTxs.RemoveAll(t => t.Category != null && 
+            (t.Category.Name.ToLower() == "transfer" || t.Category.Name.ToLower() == "transfers"));
 
         var yearBudgets = await _context.Budgets
             .Where(b => b.IsDeleted == 0 && b.MonthYear.StartsWith(yearPrefix) && (b.CreatedBy == userId || (userId == 1 && b.CreatedBy == 0)))
@@ -425,7 +433,7 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
         var totalIncome = yearTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
         var totalExpense = yearTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
         var netSavings = totalIncome - totalExpense;
-        var savingsRate = totalIncome > 0 ? (double)(netSavings / totalIncome) * 100.0 : 0.0;
+        var savingsRate = totalIncome > 0 ? Math.Round((double)(netSavings / totalIncome) * 100.0, 1) : 0.0;
 
         var monthNames = new[] { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
         var monthlyBreakdown = new List<MonthBreakdownItemDto>();
@@ -494,11 +502,11 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
         var insight = new StringBuilder();
         if (savingsRate >= 30)
         {
-            insight.Append($"Outstanding financial health in {year}! You are saving {savingsRate:F1}% of your annual income.");
+            insight.Append($"Outstanding financial health in {year}! You retained {savingsRate:F1}% of your annual income.");
         }
         else if (savingsRate > 0)
         {
-            insight.Append($"Positive savings in {year}. You retained {savingsRate:F1}% of your annual earnings.");
+            insight.Append($"Positive net balance in {year}. You retained {savingsRate:F1}% of your annual earnings.");
         }
         else if (totalIncome > 0 && netSavings < 0)
         {
