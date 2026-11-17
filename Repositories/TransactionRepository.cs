@@ -279,6 +279,10 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
             currentTxs.RemoveAll(t => legacyRolloverTxs.Contains(t));
         }
 
+        // Exclude cash checkout transactions so they NEVER count as user expenses or reduce monthly net balance!
+        currentTxs.RemoveAll(t => t.Type == "expense" && t.Note != null &&
+            (t.Note.ToLower().Contains("cash checkout") || t.Note.ToLower().Contains("checkout")));
+
         var totalIncome = currentTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
         var totalExpense = currentTxs.Where(t => t.Type == "expense").Sum(t => t.Amount);
         var netBalance = totalIncome - totalExpense;
@@ -426,6 +430,10 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
         yearTxs.RemoveAll(t => t.Category != null && 
             (t.Category.Name.ToLower() == "transfer" || t.Category.Name.ToLower() == "transfers"));
 
+        // Exclude cash checkout transactions so they NEVER count as user expenses or reduce yearly savings!
+        yearTxs.RemoveAll(t => t.Type == "expense" && t.Note != null && 
+            (t.Note.ToLower().Contains("cash checkout") || t.Note.ToLower().Contains("checkout")));
+
         var yearBudgets = await _context.Budgets
             .Where(b => b.IsDeleted == 0 && b.MonthYear.StartsWith(yearPrefix) && (b.CreatedBy == userId || (userId == 1 && b.CreatedBy == 0)))
             .ToListAsync();
@@ -522,6 +530,9 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
             insight.Append($" Your primary expense driver was {topExpenseCat.Category} (₹{topExpenseCat.Amount:N0}, {topExpenseCat.Percentage}%).");
         }
 
+        var activeMonthsCount = monthlyBreakdown.Count(mb => mb.TotalIncome > 0 || mb.TotalExpense > 0);
+        if (activeMonthsCount == 0) activeMonthsCount = 1;
+
         return new YearlySummaryDto
         {
             Year = year,
@@ -529,8 +540,8 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
             TotalExpense = totalExpense,
             NetSavings = netSavings,
             SavingsRate = Math.Round(savingsRate, 1),
-            AverageMonthlyExpense = Math.Round(totalExpense / 12m, 2),
-            AverageMonthlyIncome = Math.Round(totalIncome / 12m, 2),
+            AverageMonthlyExpense = Math.Round(totalExpense / (decimal)activeMonthsCount, 2),
+            AverageMonthlyIncome = Math.Round(totalIncome / (decimal)activeMonthsCount, 2),
             TotalTransactions = yearTxs.Count,
             HighestExpenseMonth = highestExpenseItem?.MonthName ?? "None",
             HighestExpenseAmount = highestExpenseItem?.TotalExpense ?? 0m,
@@ -589,10 +600,11 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
             .Where(t => !(t.Note != null && t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance")))
             .Sum(t => t.Amount);
 
-        // Filter out auto-budget transactions from income and rollover transfer-out from expenses
+        // Filter out auto-budget transactions from income, rollover transfer-out and cash checkout from expenses
         var validTxs = weekTxs.Where(t =>
             !(t.Type == "income" && (t.Note == "Monthly Budget" || t.Note == "Monthly Budget Allocation" || t.Note == "Opening Budget")) &&
-            !(t.Type == "expense" && t.Note != null && t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance"))
+            !(t.Type == "expense" && t.Note != null && t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance")) &&
+            !(t.Type == "expense" && t.Note != null && (t.Note.ToLower().Contains("cash checkout") || t.Note.ToLower().Contains("checkout")))
         ).ToList();
 
         var totalIncome = validTxs.Where(t => t.Type == "income").Sum(t => t.Amount);
