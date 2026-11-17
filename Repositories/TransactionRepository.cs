@@ -422,10 +422,6 @@ public class TransactionRepository(ExpenseDbContext context) : ITransactionRepos
         yearTxs.RemoveAll(t => t.Type == "expense" && t.Note != null &&
             (t.Note.StartsWith("Transferred to ") && t.Note.EndsWith(" Opening Balance")));
 
-        // Exclude rollover transfer-in opening balance transactions so they NEVER inflate yearly income or savings!
-        yearTxs.RemoveAll(t => t.Type == "income" && t.Note != null &&
-            (t.Note.StartsWith("Opening Balance from ") || (t.Note.Contains("Opening Balance") && t.Note.Contains("from")) || t.Note.StartsWith("Transferred from ")));
-
         // Exclude any transactions explicitly categorized under 'Transfer' or 'Transfers'
         yearTxs.RemoveAll(t => t.Category != null && 
             (t.Category.Name.ToLower() == "transfer" || t.Category.Name.ToLower() == "transfers"));
